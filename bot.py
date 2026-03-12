@@ -19,8 +19,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import CommandStart, Command
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────────────────────
-BOT_TOKEN = "ВАШ_BOT_TOKEN"       # Получить у @BotFather
-OWNER_ID   = 123456789            # Ваш Telegram ID (узнать у @userinfobot)
+import os
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_ID   = int(os.getenv("OWNER_ID"))
 # ──────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
