@@ -19,9 +19,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import CommandStart, Command
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────────────────────
-import os
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID   = int(os.getenv("OWNER_ID", "0"))
+BOT_TOKEN = 7151969834:AAEIP36v2mCVgFGhAmX_2oeRjNLacikDX-Y
+OWNER_ID   = 125380747
 # ──────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
