@@ -1,7 +1,8 @@
 """
-VTehnike 24 — Telegram Bot v4.0
-- 1 смена = 1 календарный день = 8 часов
-- Выбор формы оплаты
+VTehnike 24 — Telegram Bot v5.0
+- Виды работ для каждой техники свои, выбор кнопками
+- 1 смена = 1 рабочий день = 8 часов
+- Форма оплаты
 - История переписки сохраняется
 """
 
@@ -44,23 +45,120 @@ REPAIR_SERVICES = {
 }
 
 # ─── ТЕХНИКА ДЛЯ АРЕНДЫ ───────────────────────────────────────────────────────
-# 1 смена = 1 рабочий день = 8 часов
 RENTAL_TECH = {
-    "exc_mini":     {"name": "Мини-экскаватор (до 6т)",          "price_hour": 1800,  "price_day": 14400,  "from": True},
-    "exc_mid":      {"name": "Экскаватор средний (6-20т)",       "price_hour": 2500,  "price_day": 20000,  "from": True},
-    "exc_heavy":    {"name": "Экскаватор тяжёлый (20т+)",        "price_hour": 3500,  "price_day": 28000,  "from": True},
-    "exc_loader":   {"name": "Экскаватор-погрузчик (JCB, Case)", "price_hour": 2200,  "price_day": 17600,  "from": True},
-    "loader_front": {"name": "Погрузчик фронтальный",            "price_hour": 2000,  "price_day": 16000,  "from": True},
-    "loader_mini":  {"name": "Мини-погрузчик (Bobcat)",          "price_hour": 1800,  "price_day": 14400,  "from": True},
-    "bulldozer":    {"name": "Бульдозер",                        "price_hour": 3000,  "price_day": 24000,  "from": True},
-    "grader":       {"name": "Автогрейдер",                      "price_hour": 3200,  "price_day": 25600,  "from": True},
-    "crane":        {"name": "Автокран (25-50т)",                "price_hour": 3500,  "price_day": 28000,  "from": True},
-    "dump":         {"name": "Самосвал (10-20т)",                "price_hour": 1500,  "price_day": 12000,  "from": True},
-    "manipulator":  {"name": "Манипулятор",                      "price_hour": 2000,  "price_day": 16000,  "from": True},
-    "compactor":    {"name": "Каток дорожный",                   "price_hour": 2500,  "price_day": 20000,  "from": True},
+    "exc_mini":     {"name": "Мини-экскаватор (до 6т)",          "price_hour": 1800,  "price_day": 14400},
+    "exc_mid":      {"name": "Экскаватор средний (6-20т)",       "price_hour": 2500,  "price_day": 20000},
+    "exc_heavy":    {"name": "Экскаватор тяжёлый (20т+)",        "price_hour": 3500,  "price_day": 28000},
+    "exc_loader":   {"name": "Экскаватор-погрузчик (JCB, Case)", "price_hour": 2200,  "price_day": 17600},
+    "loader_front": {"name": "Погрузчик фронтальный",            "price_hour": 2000,  "price_day": 16000},
+    "loader_mini":  {"name": "Мини-погрузчик (Bobcat)",          "price_hour": 1800,  "price_day": 14400},
+    "bulldozer":    {"name": "Бульдозер",                        "price_hour": 3000,  "price_day": 24000},
+    "grader":       {"name": "Автогрейдер",                      "price_hour": 3200,  "price_day": 25600},
+    "crane":        {"name": "Автокран (25-50т)",                "price_hour": 3500,  "price_day": 28000},
+    "dump":         {"name": "Самосвал (10-20т)",                "price_hour": 1500,  "price_day": 12000},
+    "manipulator":  {"name": "Манипулятор",                      "price_hour": 2000,  "price_day": 16000},
+    "compactor":    {"name": "Каток дорожный",                   "price_hour": 2500,  "price_day": 20000},
 }
 
-# ─── СМЕНЫ (1 смена = 1 календарный день) ────────────────────────────────────
+# ─── ВИДЫ РАБОТ ПО ТЕХНИКЕ ────────────────────────────────────────────────────
+WORK_TYPES = {
+    "exc_mini": [
+        "Разработка котлована",
+        "Рытьё траншей",
+        "Планировка участка",
+        "Демонтажные работы",
+        "Благоустройство",
+        "Другое",
+    ],
+    "exc_mid": [
+        "Разработка котлована",
+        "Рытьё траншей",
+        "Вскрышные работы",
+        "Погрузка грунта",
+        "Демонтаж строений",
+        "Другое",
+    ],
+    "exc_heavy": [
+        "Разработка глубокого котлована",
+        "Вскрышные работы",
+        "Погрузка скальника / тяжёлого грунта",
+        "Демонтаж капитальных строений",
+        "Дорожные работы",
+        "Другое",
+    ],
+    "exc_loader": [
+        "Рытьё траншей под коммуникации",
+        "Планировка и засыпка",
+        "Погрузка и перемещение материалов",
+        "Расчистка территории",
+        "Дорожные работы",
+        "Другое",
+    ],
+    "loader_front": [
+        "Погрузка грунта / щебня / песка",
+        "Расчистка снега",
+        "Планировка площадки",
+        "Перемещение сыпучих материалов",
+        "Складские работы",
+        "Другое",
+    ],
+    "loader_mini": [
+        "Погрузка в ограниченном пространстве",
+        "Расчистка снега",
+        "Планировка и засыпка",
+        "Ландшафтные работы",
+        "Складские работы",
+        "Другое",
+    ],
+    "bulldozer": [
+        "Расчистка территории",
+        "Планировка площадки",
+        "Рекультивация земель",
+        "Разработка грунта",
+        "Дорожные работы",
+        "Другое",
+    ],
+    "grader": [
+        "Профилирование дороги",
+        "Планировка площадки",
+        "Разравнивание щебня / грунта",
+        "Содержание грунтовых дорог",
+        "Снегоуборочные работы",
+        "Другое",
+    ],
+    "crane": [
+        "Монтаж конструкций",
+        "Подъём оборудования",
+        "Строительно-монтажные работы",
+        "Разгрузка / погрузка крупногабаритного груза",
+        "Демонтаж конструкций",
+        "Другое",
+    ],
+    "dump": [
+        "Вывоз грунта",
+        "Вывоз строительного мусора",
+        "Доставка щебня / песка / ПГС",
+        "Вывоз снега",
+        "Перевозка сыпучих грузов",
+        "Другое",
+    ],
+    "manipulator": [
+        "Подъём и перемещение грузов",
+        "Разгрузка стройматериалов",
+        "Монтаж / демонтаж оборудования",
+        "Перевозка с разгрузкой",
+        "Другое",
+    ],
+    "compactor": [
+        "Уплотнение грунта",
+        "Уплотнение щебня / ПГС",
+        "Устройство дорожного основания",
+        "Уплотнение асфальта",
+        "Другое",
+    ],
+}
+
+# ─── СМЕНЫ (1 смена = 1 календарный день = 8 часов) ──────────────────────────
 SHIFTS = {
     "s1":  {"name": "1 смена — 1 день",   "count": 1},
     "s2":  {"name": "2 смены — 2 дня",    "count": 2},
@@ -80,9 +178,9 @@ URGENCY = {
 
 # ─── ФОРМА ОПЛАТЫ ─────────────────────────────────────────────────────────────
 PAYMENT = {
-    "cash":      {"name": "Наличные"},
-    "bank_nds":  {"name": "Безнал с НДС"},
-    "bank_nonnd":{"name": "Безнал без НДС"},
+    "cash":       {"name": "Наличные"},
+    "bank_nds":   {"name": "Безнал с НДС"},
+    "bank_nonds": {"name": "Безнал без НДС"},
 }
 
 # ─── СОСТОЯНИЯ ────────────────────────────────────────────────────────────────
@@ -90,6 +188,7 @@ class Order(StatesGroup):
     choosing_service  = State()
     choosing_rental   = State()
     choosing_shifts   = State()
+    choosing_worktype = State()
     choosing_urgency  = State()
     choosing_payment  = State()
     entering_tech     = State()
@@ -97,6 +196,11 @@ class Order(StatesGroup):
     entering_phone    = State()
     entering_comment  = State()
     confirm           = State()
+
+# ─── ХЕЛПЕР форматирования цены ───────────────────────────────────────────────
+def fmt(amount: int, prefix: bool = False) -> str:
+    s = f"{amount:,}".replace(",", " ") + " руб."
+    return ("от " + s) if prefix else s
 
 # ─── КЛАВИАТУРЫ ───────────────────────────────────────────────────────────────
 def kb_main():
@@ -129,6 +233,19 @@ def kb_rental_tech():
     rows.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+def kb_work_types(tech_key: str):
+    works = WORK_TYPES.get(tech_key, ["Другое"])
+    rows = []
+    for i in range(0, len(works), 2):
+        row = []
+        for w in works[i:i+2]:
+            # используем индекс чтобы не превышать лимит callback_data
+            idx = works.index(w)
+            row.append(InlineKeyboardButton(text=w, callback_data=f"wrk_{tech_key}_{idx}"))
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="start_rental")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 def kb_shifts():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="1 смена — 1 день",  callback_data="shf_s1")],
@@ -153,7 +270,7 @@ def kb_payment():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💵 Наличные",        callback_data="pay_cash")],
         [InlineKeyboardButton(text="🏦 Безнал с НДС",    callback_data="pay_bank_nds")],
-        [InlineKeyboardButton(text="🏦 Безнал без НДС",  callback_data="pay_bank_nonnd")],
+        [InlineKeyboardButton(text="🏦 Безнал без НДС",  callback_data="pay_bank_nonds")],
     ])
 
 def kb_skip():
@@ -174,11 +291,7 @@ def kb_phone():
         one_time_keyboard=True
     )
 
-# ─── ХЕЛПЕРЫ ──────────────────────────────────────────────────────────────────
-def fmt(amount: int, prefix: bool = False) -> str:
-    s = f"{amount:,}".replace(",", " ") + " руб."
-    return ("от " + s) if prefix else s
-
+# ─── ИТОГОВАЯ КАРТОЧКА ────────────────────────────────────────────────────────
 def order_summary(data: dict) -> str:
     order_type = data.get("order_type", "repair")
     payment    = PAYMENT.get(data.get("payment", ""), {}).get("name", "-")
@@ -194,28 +307,29 @@ def order_summary(data: dict) -> str:
             price_line = f"{fmt(tech.get('price_hour', 0), True)}/час — объём уточним"
         return (
             "Заявка на аренду:\n\n"
-            f"Техника:      {tech.get('name', '-')}\n"
-            f"Смены:        {shift.get('name', '-')}\n"
-            f"Стоимость:    {price_line}\n"
-            f"Оплата:       {payment}\n"
-            f"Адрес:        {data.get('location', '-')}\n"
-            f"Телефон:      {data.get('phone', '-')}\n"
-            f"Комментарий:  {data.get('comment', 'нет')}"
+            f"Техника:     {tech.get('name', '-')}\n"
+            f"Вид работ:   {data.get('work_type', '-')}\n"
+            f"Смены:       {shift.get('name', '-')}\n"
+            f"Стоимость:   {price_line}\n"
+            f"Оплата:      {payment}\n"
+            f"Адрес:       {data.get('location', '-')}\n"
+            f"Телефон:     {data.get('phone', '-')}\n"
+            f"Комментарий: {data.get('comment', 'нет')}"
         )
     else:
         svc = REPAIR_SERVICES.get(data.get("service", ""), {})
         urg = URGENCY.get(data.get("urgency", "standard"), {})
         return (
             "Заявка на ремонт:\n\n"
-            f"Услуга:       {svc.get('name', '-')}\n"
-            f"Срочность:    {urg.get('name', '-')}\n"
-            f"Техника:      {data.get('tech', '-')}\n"
-            f"Адрес:        {data.get('location', '-')}\n"
-            f"Телефон:      {data.get('phone', '-')}\n"
-            f"Оплата:       {payment}\n"
-            f"Комментарий:  {data.get('comment', 'нет')}\n\n"
-            f"Стоимость:    {svc.get('price', '-')} ({urg.get('mult', '')})\n"
-            f"Срок:         {svc.get('days', '-')}"
+            f"Услуга:      {svc.get('name', '-')}\n"
+            f"Срочность:   {urg.get('name', '-')}\n"
+            f"Техника:     {data.get('tech', '-')}\n"
+            f"Адрес:       {data.get('location', '-')}\n"
+            f"Телефон:     {data.get('phone', '-')}\n"
+            f"Оплата:      {payment}\n"
+            f"Комментарий: {data.get('comment', 'нет')}\n\n"
+            f"Стоимость:   {svc.get('price', '-')} ({urg.get('mult', '')})\n"
+            f"Срок:        {svc.get('days', '-')}"
         )
 
 async def notify_owner(data: dict, user):
@@ -354,10 +468,27 @@ async def choose_rental_tech(cb: CallbackQuery, state: FSMContext):
     key = cb.data.replace("rnt_", "")
     tech = RENTAL_TECH[key]
     await state.update_data(rental_tech=key)
-    await state.set_state(Order.choosing_shifts)
+    await state.set_state(Order.choosing_worktype)
     await cb.message.answer(
         f"Выбрано: {tech['name']}\n"
         f"Цена: {fmt(tech['price_hour'], True)}/час — {fmt(tech['price_day'], True)}/смена\n\n"
+        "Выберите вид работ:",
+        reply_markup=kb_work_types(key)
+    )
+
+@dp.callback_query(F.data.startswith("wrk_"), Order.choosing_worktype)
+async def choose_work_type(cb: CallbackQuery, state: FSMContext):
+    # формат: wrk_exc_mini_0
+    parts = cb.data.split("_")
+    # последний элемент — индекс, остальное после "wrk_" — ключ техники
+    idx = int(parts[-1])
+    tech_key = "_".join(parts[1:-1])
+    works = WORK_TYPES.get(tech_key, ["Другое"])
+    work_name = works[idx] if idx < len(works) else "Другое"
+    await state.update_data(work_type=work_name)
+    await state.set_state(Order.choosing_shifts)
+    await cb.message.answer(
+        f"Вид работ: {work_name}\n\n"
         "Сколько смен нужно?\n"
         "(1 смена = 1 рабочий день = 8 часов)",
         reply_markup=kb_shifts()
@@ -400,29 +531,20 @@ async def enter_tech(message: Message, state: FSMContext):
 async def enter_location(message: Message, state: FSMContext):
     await state.update_data(location=message.text)
     await state.set_state(Order.entering_phone)
-    await message.answer(
-        "Укажите номер телефона:",
-        reply_markup=kb_phone()
-    )
+    await message.answer("Укажите номер телефона:", reply_markup=kb_phone())
 
 @dp.message(Order.entering_phone, F.contact)
 async def enter_phone_contact(message: Message, state: FSMContext):
     await state.update_data(phone=message.contact.phone_number)
     await state.set_state(Order.choosing_payment)
-    await message.answer(
-        "Выберите форму оплаты:",
-        reply_markup=ReplyKeyboardRemove()
-    )
+    await message.answer("Выберите форму оплаты:", reply_markup=ReplyKeyboardRemove())
     await message.answer("👇", reply_markup=kb_payment())
 
 @dp.message(Order.entering_phone)
 async def enter_phone_text(message: Message, state: FSMContext):
     await state.update_data(phone=message.text)
     await state.set_state(Order.choosing_payment)
-    await message.answer(
-        "Выберите форму оплаты:",
-        reply_markup=ReplyKeyboardRemove()
-    )
+    await message.answer("Выберите форму оплаты:", reply_markup=ReplyKeyboardRemove())
     await message.answer("👇", reply_markup=kb_payment())
 
 @dp.callback_query(F.data.startswith("pay_"), Order.choosing_payment)
@@ -430,22 +552,11 @@ async def choose_payment(cb: CallbackQuery, state: FSMContext):
     key = cb.data.replace("pay_", "")
     await state.update_data(payment=key)
     await state.set_state(Order.entering_comment)
-    data = await state.get_data()
-    order_type = data.get("order_type", "repair")
-    if order_type == "rental":
-        prompt = (
-            f"Оплата: {PAYMENT[key]['name']}\n\n"
-            "Укажите вид работ — для чего нужна техника:\n"
-            "Например: разработка котлована, планировка участка, погрузка грунта\n\n"
-            "Или нажмите Пропустить:"
-        )
-    else:
-        prompt = (
-            f"Оплата: {PAYMENT[key]['name']}\n\n"
-            "Опишите задачу подробнее\n"
-            "или нажмите Пропустить:"
-        )
-    await cb.message.answer(prompt, reply_markup=kb_skip())
+    await cb.message.answer(
+        f"Оплата: {PAYMENT[key]['name']}\n\n"
+        "Добавьте комментарий или нажмите Пропустить:",
+        reply_markup=kb_skip()
+    )
 
 @dp.callback_query(F.data == "skip_comment", Order.entering_comment)
 async def skip_comment(cb: CallbackQuery, state: FSMContext):
@@ -473,15 +584,14 @@ async def confirm_order(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     await notify_owner(data, cb.from_user)
     await state.clear()
-    await cb.message.answer(
+    msg = (
         "Заявка принята!\n\n"
         "Свяжемся с вами в течение 15 минут.\n\n"
-        + ("Можете прислать фото неисправности прямо в этот чат —\n"
-           "это поможет точнее назвать цену.\n\n"
-           if data.get("order_type") == "repair" else "")
-        + "Спасибо, что выбрали VTehnike 24!",
-        reply_markup=kb_main()
     )
+    if data.get("order_type") == "repair":
+        msg += "Можете прислать фото неисправности прямо в этот чат — поможет точнее назвать цену.\n\n"
+    msg += "Спасибо, что выбрали VTehnike 24!"
+    await cb.message.answer(msg, reply_markup=kb_main())
 
 @dp.callback_query(F.data == "confirm_no", Order.confirm)
 async def cancel_order(cb: CallbackQuery, state: FSMContext):
@@ -513,7 +623,7 @@ async def fallback(message: Message, state: FSMContext):
 
 # ─── ЗАПУСК ───────────────────────────────────────────────────────────────────
 async def main():
-    print("VTehnike 24 Bot v4.0 запущен!")
+    print("VTehnike 24 Bot v5.0 запущен!")
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
