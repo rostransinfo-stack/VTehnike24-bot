@@ -267,7 +267,7 @@ async def cmd_rental_prices(message: Message):
 async def cmd_contacts(message: Message):
     await message.answer(
         "Контакты VTehnike 24\n\n"
-        "Телефон: +7 (___) ___-__-__\n"
+        "Телефон: +7 (992) 350-80-08\n"
         "Сайт: www.vtehnike24.ru\n"
         "МО — выезжаем на любой объект\n\n"
         "Пн-Сб 8:00-20:00\n"
@@ -284,7 +284,7 @@ async def back_main(cb: CallbackQuery, state: FSMContext):
 async def call_us(cb: CallbackQuery):
     await cb.message.answer(
         "Позвоните нам:\n\n"
-        "+7 (___) ___-__-__\n\n"
+        "+7 (992) 350-80-08\n\n"
         "Пн-Сб 8:00-20:00\n"
         "Экстренные выезды — круглосуточно\n\n"
         "Или оставьте заявку — перезвоним:",
@@ -429,12 +429,22 @@ async def choose_payment(cb: CallbackQuery, state: FSMContext):
     key = cb.data.replace("pay_", "")
     await state.update_data(payment=key)
     await state.set_state(Order.entering_comment)
-    await cb.message.answer(
-        f"Оплата: {PAYMENT[key]['name']}\n\n"
-        "Опишите задачу подробнее\n"
-        "или нажмите Пропустить:",
-        reply_markup=kb_skip()
-    )
+    data = await state.get_data()
+    order_type = data.get("order_type", "repair")
+    if order_type == "rental":
+        prompt = (
+            f"Оплата: {PAYMENT[key]['name']}\n\n"
+            "Укажите вид работ — для чего нужна техника:\n"
+            "Например: разработка котлована, планировка участка, погрузка грунта\n\n"
+            "Или нажмите Пропустить:"
+        )
+    else:
+        prompt = (
+            f"Оплата: {PAYMENT[key]['name']}\n\n"
+            "Опишите задачу подробнее\n"
+            "или нажмите Пропустить:"
+        )
+    await cb.message.answer(prompt, reply_markup=kb_skip())
 
 @dp.callback_query(F.data == "skip_comment", Order.entering_comment)
 async def skip_comment(cb: CallbackQuery, state: FSMContext):
@@ -465,9 +475,10 @@ async def confirm_order(cb: CallbackQuery, state: FSMContext):
     await cb.message.answer(
         "Заявка принята!\n\n"
         "Свяжемся с вами в течение 15 минут.\n\n"
-        "Можете прислать фото прямо в этот чат —\n"
-        "это поможет точнее назвать цену.\n\n"
-        "Спасибо, что выбрали VTehnike 24!",
+        + ("Можете прислать фото неисправности прямо в этот чат —\n"
+           "это поможет точнее назвать цену.\n\n"
+           if data.get("order_type") == "repair" else "")
+        + "Спасибо, что выбрали VTehnike 24!",
         reply_markup=kb_main()
     )
 
