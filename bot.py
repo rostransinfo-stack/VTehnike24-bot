@@ -1,8 +1,8 @@
 """
-VTehnike 24 — Telegram Bot v3.0
+VTehnike 24 — Telegram Bot v4.0
+- 1 смена = 1 календарный день = 8 часов
+- Выбор формы оплаты
 - История переписки сохраняется
-- Аренда: выбор техники + количество смен
-- Ремонт: полный список услуг + срочность
 """
 
 import asyncio
@@ -21,7 +21,7 @@ from aiogram.filters import CommandStart, Command
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────────────────────
 BOT_TOKEN = "7151969834:AAHLEnwxwfpaaERnJaOYiiA6ctXJoxvR4C8"    # Токен от @BotFather
-OWNER_ID   = "125380747"     # Ваш Telegram ID от @userinfobot
+OWNER_ID   = "125380747"      # Ваш Telegram ID от @userinfobot
 # ──────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
@@ -30,50 +30,59 @@ dp  = Dispatcher(storage=MemoryStorage())
 
 # ─── УСЛУГИ РЕМОНТА ───────────────────────────────────────────────────────────
 REPAIR_SERVICES = {
-    "bucket_basic":  {"name": "Ремонт ковша (базовый)",       "price": "от 15 000 руб.",    "days": "1-2 дня"},
-    "bucket_hardox": {"name": "Hardox-бронирование ковша",    "price": "от 40 000 руб.",    "days": "2-3 дня"},
-    "teeth":         {"name": "Замена зубьев (комплект)",      "price": "от 12 000 руб.",    "days": "1 день"},
-    "knife":         {"name": "Замена ножа",                   "price": "от 12 000 руб.",    "days": "1 день"},
-    "bushing":       {"name": "Восстановление втулок",         "price": "от 5 000 руб./шт",  "days": "1-2 дня"},
-    "hydraulics":    {"name": "Ремонт гидравлики",             "price": "от 25 000 руб.",    "days": "2-4 дня"},
-    "cylinder":      {"name": "Ремонт гидроцилиндра",          "price": "от 10 000 руб.",    "days": "1-2 дня"},
-    "undercarriage": {"name": "Ходовая часть",                 "price": "от 18 000 руб.",    "days": "2-4 дня"},
-    "maintenance":   {"name": "Плановое ТО",                   "price": "от 10 000 руб.",    "days": "1 день"},
-    "welding":       {"name": "Сварочные работы",              "price": "от 8 000 руб.",     "days": "1-2 дня"},
-    "diagnostics":   {"name": "Диагностика (выезд)",           "price": "5 000 руб.",        "days": "в день заявки"},
+    "bucket_basic":  {"name": "Ремонт ковша (базовый)",       "price": "от 15 000 руб.",   "days": "1-2 дня"},
+    "bucket_hardox": {"name": "Hardox-бронирование ковша",    "price": "от 40 000 руб.",   "days": "2-3 дня"},
+    "teeth":         {"name": "Замена зубьев (комплект)",      "price": "от 12 000 руб.",   "days": "1 день"},
+    "knife":         {"name": "Замена ножа",                   "price": "от 12 000 руб.",   "days": "1 день"},
+    "bushing":       {"name": "Восстановление втулок",         "price": "от 5 000 руб./шт", "days": "1-2 дня"},
+    "hydraulics":    {"name": "Ремонт гидравлики",             "price": "от 25 000 руб.",   "days": "2-4 дня"},
+    "cylinder":      {"name": "Ремонт гидроцилиндра",          "price": "от 10 000 руб.",   "days": "1-2 дня"},
+    "undercarriage": {"name": "Ходовая часть",                 "price": "от 18 000 руб.",   "days": "2-4 дня"},
+    "maintenance":   {"name": "Плановое ТО",                   "price": "от 10 000 руб.",   "days": "1 день"},
+    "welding":       {"name": "Сварочные работы",              "price": "от 8 000 руб.",    "days": "1-2 дня"},
+    "diagnostics":   {"name": "Диагностика (выезд)",           "price": "5 000 руб.",       "days": "в день заявки"},
 }
 
 # ─── ТЕХНИКА ДЛЯ АРЕНДЫ ───────────────────────────────────────────────────────
+# 1 смена = 1 рабочий день = 8 часов
 RENTAL_TECH = {
-    "exc_mini":     {"name": "Мини-экскаватор (до 6т)",          "price_hour": 1800,  "price_shift": 14400},
-    "exc_mid":      {"name": "Экскаватор средний (6-20т)",       "price_hour": 2500,  "price_shift": 20000},
-    "exc_heavy":    {"name": "Экскаватор тяжёлый (20т+)",        "price_hour": 3500,  "price_shift": 28000},
-    "exc_loader":   {"name": "Экскаватор-погрузчик (JCB, Case)", "price_hour": 2200,  "price_shift": 17600},
-    "loader_front": {"name": "Погрузчик фронтальный",            "price_hour": 2000,  "price_shift": 16000},
-    "loader_mini":  {"name": "Мини-погрузчик (Bobcat)",          "price_hour": 1800,  "price_shift": 14400},
-    "bulldozer":    {"name": "Бульдозер",                        "price_hour": 3000,  "price_shift": 24000},
-    "grader":       {"name": "Автогрейдер",                      "price_hour": 3200,  "price_shift": 25600},
-    "crane":        {"name": "Автокран (25-50т)",                "price_hour": 3500,  "price_shift": 28000},
-    "dump":         {"name": "Самосвал (10-20т)",                "price_hour": 1500,  "price_shift": 12000},
-    "manipulator":  {"name": "Манипулятор",                      "price_hour": 2000,  "price_shift": 16000},
-    "compactor":    {"name": "Каток дорожный",                   "price_hour": 2500,  "price_shift": 20000},
+    "exc_mini":     {"name": "Мини-экскаватор (до 6т)",          "price_hour": 1800,  "price_day": 14400},
+    "exc_mid":      {"name": "Экскаватор средний (6-20т)",       "price_hour": 2500,  "price_day": 20000},
+    "exc_heavy":    {"name": "Экскаватор тяжёлый (20т+)",        "price_hour": 3500,  "price_day": 28000},
+    "exc_loader":   {"name": "Экскаватор-погрузчик (JCB, Case)", "price_hour": 2200,  "price_day": 17600},
+    "loader_front": {"name": "Погрузчик фронтальный",            "price_hour": 2000,  "price_day": 16000},
+    "loader_mini":  {"name": "Мини-погрузчик (Bobcat)",          "price_hour": 1800,  "price_day": 14400},
+    "bulldozer":    {"name": "Бульдозер",                        "price_hour": 3000,  "price_day": 24000},
+    "grader":       {"name": "Автогрейдер",                      "price_hour": 3200,  "price_day": 25600},
+    "crane":        {"name": "Автокран (25-50т)",                "price_hour": 3500,  "price_day": 28000},
+    "dump":         {"name": "Самосвал (10-20т)",                "price_hour": 1500,  "price_day": 12000},
+    "manipulator":  {"name": "Манипулятор",                      "price_hour": 2000,  "price_day": 16000},
+    "compactor":    {"name": "Каток дорожный",                   "price_hour": 2500,  "price_day": 20000},
 }
 
-# Смена = 8 часов
+# ─── СМЕНЫ (1 смена = 1 календарный день) ────────────────────────────────────
 SHIFTS = {
-    "s1":  {"name": "1 смена (8 часов)",   "count": 1},
-    "s2":  {"name": "2 смены (16 часов)",  "count": 2},
-    "s3":  {"name": "3 смены (1 день)",    "count": 3},
-    "s5":  {"name": "5 смен (неделя)",     "count": 5},
-    "s10": {"name": "10 смен (2 недели)",  "count": 10},
-    "s22": {"name": "22 смены (месяц)",    "count": 22},
-    "own": {"name": "Другое (уточним)",    "count": 0},
+    "s1":  {"name": "1 смена — 1 день",   "count": 1},
+    "s2":  {"name": "2 смены — 2 дня",    "count": 2},
+    "s3":  {"name": "3 смены — 3 дня",    "count": 3},
+    "s5":  {"name": "5 смен — 5 дней",    "count": 5},
+    "s10": {"name": "10 смен — 10 дней",  "count": 10},
+    "s22": {"name": "22 смены — месяц",   "count": 22},
+    "own": {"name": "Другое — уточним",   "count": 0},
 }
 
+# ─── СРОЧНОСТЬ ────────────────────────────────────────────────────────────────
 URGENCY = {
     "standard": {"name": "Стандарт (2-3 дня)",       "mult": "x1"},
     "urgent":   {"name": "Срочно (24 часа) +30%",    "mult": "+30%"},
     "express":  {"name": "Экстренно (сегодня) +60%", "mult": "+60%"},
+}
+
+# ─── ФОРМА ОПЛАТЫ ─────────────────────────────────────────────────────────────
+PAYMENT = {
+    "cash":      {"name": "Наличные"},
+    "bank_nds":  {"name": "Безнал с НДС"},
+    "bank_nonnd":{"name": "Безнал без НДС"},
 }
 
 # ─── СОСТОЯНИЯ ────────────────────────────────────────────────────────────────
@@ -82,6 +91,7 @@ class Order(StatesGroup):
     choosing_rental   = State()
     choosing_shifts   = State()
     choosing_urgency  = State()
+    choosing_payment  = State()
     entering_tech     = State()
     entering_location = State()
     entering_phone    = State()
@@ -91,10 +101,10 @@ class Order(StatesGroup):
 # ─── КЛАВИАТУРЫ ───────────────────────────────────────────────────────────────
 def kb_main():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔧 Заявка на ремонт",  callback_data="start_repair")],
-        [InlineKeyboardButton(text="🚜 Аренда техники",    callback_data="start_rental")],
-        [InlineKeyboardButton(text="💰 Прайс-лист",        callback_data="show_prices")],
-        [InlineKeyboardButton(text="📞 Позвонить нам",     callback_data="call_us")],
+        [InlineKeyboardButton(text="🔧 Заявка на ремонт", callback_data="start_repair")],
+        [InlineKeyboardButton(text="🚜 Аренда техники",   callback_data="start_rental")],
+        [InlineKeyboardButton(text="💰 Прайс-лист",       callback_data="show_prices")],
+        [InlineKeyboardButton(text="📞 Позвонить нам",    callback_data="call_us")],
     ])
 
 def kb_repair_services():
@@ -121,22 +131,29 @@ def kb_rental_tech():
 
 def kb_shifts():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1 смена (8 ч)",    callback_data="shf_s1")],
-        [InlineKeyboardButton(text="2 смены (16 ч)",   callback_data="shf_s2"),
-         InlineKeyboardButton(text="3 смены (1 день)", callback_data="shf_s3")],
-        [InlineKeyboardButton(text="5 смен (неделя)",  callback_data="shf_s5"),
-         InlineKeyboardButton(text="10 смен (2 нед.)", callback_data="shf_s10")],
-        [InlineKeyboardButton(text="22 смены (месяц)", callback_data="shf_s22")],
-        [InlineKeyboardButton(text="Другое (уточним)", callback_data="shf_own")],
-        [InlineKeyboardButton(text="⬅️ Назад",         callback_data="start_rental")],
+        [InlineKeyboardButton(text="1 смена — 1 день",  callback_data="shf_s1")],
+        [InlineKeyboardButton(text="2 смены — 2 дня",   callback_data="shf_s2"),
+         InlineKeyboardButton(text="3 смены — 3 дня",   callback_data="shf_s3")],
+        [InlineKeyboardButton(text="5 смен — 5 дней",   callback_data="shf_s5"),
+         InlineKeyboardButton(text="10 смен — 10 дней", callback_data="shf_s10")],
+        [InlineKeyboardButton(text="22 смены — месяц",  callback_data="shf_s22")],
+        [InlineKeyboardButton(text="Другое — уточним",  callback_data="shf_own")],
+        [InlineKeyboardButton(text="⬅️ Назад",          callback_data="start_rental")],
     ])
 
 def kb_urgency():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Стандарт (2-3 дня)",        callback_data="urg_standard")],
-        [InlineKeyboardButton(text="Срочно (24 часа) +30%",     callback_data="urg_urgent")],
-        [InlineKeyboardButton(text="Экстренно (сегодня) +60%",  callback_data="urg_express")],
-        [InlineKeyboardButton(text="⬅️ Назад",                  callback_data="start_repair")],
+        [InlineKeyboardButton(text="Стандарт (2-3 дня)",       callback_data="urg_standard")],
+        [InlineKeyboardButton(text="Срочно (24 часа) +30%",    callback_data="urg_urgent")],
+        [InlineKeyboardButton(text="Экстренно (сегодня) +60%", callback_data="urg_express")],
+        [InlineKeyboardButton(text="⬅️ Назад",                 callback_data="start_repair")],
+    ])
+
+def kb_payment():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💵 Наличные",        callback_data="pay_cash")],
+        [InlineKeyboardButton(text="🏦 Безнал с НДС",    callback_data="pay_bank_nds")],
+        [InlineKeyboardButton(text="🏦 Безнал без НДС",  callback_data="pay_bank_nonnd")],
     ])
 
 def kb_skip():
@@ -158,54 +175,60 @@ def kb_phone():
     )
 
 # ─── ХЕЛПЕРЫ ──────────────────────────────────────────────────────────────────
-def format_price(amount: int) -> str:
+def fmt(amount: int) -> str:
     return f"{amount:,}".replace(",", " ") + " руб."
 
 def order_summary(data: dict) -> str:
     order_type = data.get("order_type", "repair")
+    payment    = PAYMENT.get(data.get("payment", ""), {}).get("name", "-")
+
     if order_type == "rental":
-        tech = RENTAL_TECH.get(data.get("rental_tech", ""), {})
+        tech  = RENTAL_TECH.get(data.get("rental_tech", ""), {})
         shift = SHIFTS.get(data.get("shifts", "own"), {})
         count = shift.get("count", 0)
         if count > 0:
-            total = tech.get("price_shift", 0) * count
-            price_line = f"{shift['name']} x {format_price(tech.get('price_shift', 0))} = {format_price(total)}"
+            total      = tech.get("price_day", 0) * count
+            price_line = f"{shift['name']} x {fmt(tech.get('price_day', 0))} = {fmt(total)}"
         else:
-            price_line = f"{format_price(tech.get('price_hour', 0))}/час (уточним объём)"
+            price_line = f"{fmt(tech.get('price_hour', 0))}/час — объём уточним"
         return (
-            "Ваша заявка на аренду:\n\n"
-            f"Техника: {tech.get('name', '-')}\n"
-            f"Смены: {shift.get('name', '-')}\n"
-            f"Стоимость: {price_line}\n"
-            f"Адрес/объект: {data.get('location', '-')}\n"
-            f"Телефон: {data.get('phone', '-')}\n"
-            f"Комментарий: {data.get('comment', 'нет')}"
+            "Заявка на аренду:\n\n"
+            f"Техника:      {tech.get('name', '-')}\n"
+            f"Смены:        {shift.get('name', '-')}\n"
+            f"Стоимость:    {price_line}\n"
+            f"Оплата:       {payment}\n"
+            f"Адрес:        {data.get('location', '-')}\n"
+            f"Телефон:      {data.get('phone', '-')}\n"
+            f"Комментарий:  {data.get('comment', 'нет')}"
         )
     else:
         svc = REPAIR_SERVICES.get(data.get("service", ""), {})
         urg = URGENCY.get(data.get("urgency", "standard"), {})
         return (
-            "Ваша заявка на ремонт:\n\n"
-            f"Услуга: {svc.get('name', '-')}\n"
-            f"Срочность: {urg.get('name', '-')}\n"
-            f"Техника: {data.get('tech', '-')}\n"
-            f"Адрес/объект: {data.get('location', '-')}\n"
-            f"Телефон: {data.get('phone', '-')}\n"
-            f"Комментарий: {data.get('comment', 'нет')}\n\n"
-            f"Стоимость: {svc.get('price', '-')} ({urg.get('mult', '')})\n"
-            f"Срок: {svc.get('days', '-')}"
+            "Заявка на ремонт:\n\n"
+            f"Услуга:       {svc.get('name', '-')}\n"
+            f"Срочность:    {urg.get('name', '-')}\n"
+            f"Техника:      {data.get('tech', '-')}\n"
+            f"Адрес:        {data.get('location', '-')}\n"
+            f"Телефон:      {data.get('phone', '-')}\n"
+            f"Оплата:       {payment}\n"
+            f"Комментарий:  {data.get('comment', 'нет')}\n\n"
+            f"Стоимость:    {svc.get('price', '-')} ({urg.get('mult', '')})\n"
+            f"Срок:         {svc.get('days', '-')}"
         )
 
 async def notify_owner(data: dict, user):
     order_type = data.get("order_type", "repair")
+    label = "АРЕНДА" if order_type == "rental" else "РЕМОНТ"
     header = (
-        f"НОВАЯ ЗАЯВКА - {'АРЕНДА' if order_type == 'rental' else 'РЕМОНТ'}\n"
+        f"НОВАЯ ЗАЯВКА — {label}\n"
         f"{datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
         f"Клиент: {user.full_name}"
         f"{' (@' + user.username + ')' if user.username else ''}\n"
         f"TG ID: {user.id}\n\n"
     )
-    body = order_summary(data).replace("Ваша заявка на аренду:\n\n", "").replace("Ваша заявка на ремонт:\n\n", "")
+    body = order_summary(data)
+    body = body.replace("Заявка на аренду:\n\n", "").replace("Заявка на ремонт:\n\n", "")
     await bot.send_message(OWNER_ID, header + body)
 
 # ─── СТАРТ ────────────────────────────────────────────────────────────────────
@@ -218,7 +241,7 @@ async def cmd_start(message: Message, state: FSMContext):
         "Ремонт ковшей, восстановление спецтехники и аренда.\n"
         "Выезжаем на объект по всей Московской области.\n\n"
         "Ремонт ковша за 24 часа\n"
-        "Приедем сами - никуда везти не надо\n"
+        "Приедем сами — никуда везти не надо\n"
         "Цену скажем за 15 минут по фото\n\n"
         "Чем могу помочь?",
         reply_markup=kb_main()
@@ -226,18 +249,18 @@ async def cmd_start(message: Message, state: FSMContext):
 
 @dp.message(Command("prices"))
 async def cmd_prices(message: Message):
-    text = "Прайс - Ремонт спецтехники\n\n"
+    text = "Прайс — Ремонт спецтехники\n\n"
     for svc in REPAIR_SERVICES.values():
-        text += f"{svc['name']}\n{svc['price']} - {svc['days']}\n\n"
-    text += "Точная стоимость - после фото или осмотра"
+        text += f"{svc['name']}\n{svc['price']} — {svc['days']}\n\n"
+    text += "Точная стоимость — после фото или осмотра"
     await message.answer(text)
 
 @dp.message(Command("rental"))
 async def cmd_rental_prices(message: Message):
-    text = "Прайс - Аренда спецтехники\n\n"
+    text = "Прайс — Аренда спецтехники\n1 смена = 1 рабочий день = 8 часов\n\n"
     for t in RENTAL_TECH.values():
-        text += f"{t['name']}\n{format_price(t['price_hour'])}/час - {format_price(t['price_shift'])}/смена\n\n"
-    text += "С оператором - Выезд по МО - Работаем с ИП и ООО\nСмена = 8 часов"
+        text += f"{t['name']}\n{fmt(t['price_hour'])}/час — {fmt(t['price_day'])}/смена\n\n"
+    text += "С оператором — Выезд по МО — ИП и ООО"
     await message.answer(text)
 
 @dp.message(Command("contacts"))
@@ -246,9 +269,9 @@ async def cmd_contacts(message: Message):
         "Контакты VTehnike 24\n\n"
         "Телефон: +7 (___) ___-__-__\n"
         "Сайт: www.vtehnike24.ru\n"
-        "МО - выезжаем на любой объект\n\n"
+        "МО — выезжаем на любой объект\n\n"
         "Пн-Сб 8:00-20:00\n"
-        "Экстренные выезды - круглосуточно"
+        "Экстренные выезды — круглосуточно"
     )
 
 # ─── ГЛАВНОЕ МЕНЮ ─────────────────────────────────────────────────────────────
@@ -263,8 +286,8 @@ async def call_us(cb: CallbackQuery):
         "Позвоните нам:\n\n"
         "+7 (___) ___-__-__\n\n"
         "Пн-Сб 8:00-20:00\n"
-        "Экстренные выезды - круглосуточно\n\n"
-        "Или оставьте заявку - перезвоним:",
+        "Экстренные выезды — круглосуточно\n\n"
+        "Или оставьте заявку — перезвоним:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Оставить заявку", callback_data="start_repair")],
             [InlineKeyboardButton(text="Главное меню",    callback_data="back_main")],
@@ -273,10 +296,10 @@ async def call_us(cb: CallbackQuery):
 
 @dp.callback_query(F.data == "show_prices")
 async def show_prices(cb: CallbackQuery):
-    text = "Прайс - Ремонт спецтехники\n\n"
+    text = "Прайс — Ремонт спецтехники\n\n"
     for svc in REPAIR_SERVICES.values():
-        text += f"{svc['name']}\n{svc['price']} - {svc['days']}\n\n"
-    text += "Точная стоимость - после фото или осмотра"
+        text += f"{svc['name']}\n{svc['price']} — {svc['days']}\n\n"
+    text += "Точная стоимость — после фото или осмотра"
     await cb.message.answer(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -291,10 +314,7 @@ async def start_repair(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.update_data(order_type="repair")
     await state.set_state(Order.choosing_service)
-    await cb.message.answer(
-        "Выберите услугу:",
-        reply_markup=kb_repair_services()
-    )
+    await cb.message.answer("Выберите услугу:", reply_markup=kb_repair_services())
 
 @dp.callback_query(F.data.startswith("rep_"), Order.choosing_service)
 async def choose_repair_service(cb: CallbackQuery, state: FSMContext):
@@ -304,7 +324,7 @@ async def choose_repair_service(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Order.choosing_urgency)
     await cb.message.answer(
         f"Выбрано: {svc['name']}\n"
-        f"Цена: {svc['price']} - {svc['days']}\n\n"
+        f"Цена: {svc['price']} — {svc['days']}\n\n"
         "Выберите срочность:",
         reply_markup=kb_urgency()
     )
@@ -326,10 +346,7 @@ async def start_rental(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.update_data(order_type="rental")
     await state.set_state(Order.choosing_rental)
-    await cb.message.answer(
-        "Выберите технику для аренды:",
-        reply_markup=kb_rental_tech()
-    )
+    await cb.message.answer("Выберите технику для аренды:", reply_markup=kb_rental_tech())
 
 @dp.callback_query(F.data.startswith("rnt_"), Order.choosing_rental)
 async def choose_rental_tech(cb: CallbackQuery, state: FSMContext):
@@ -339,8 +356,9 @@ async def choose_rental_tech(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Order.choosing_shifts)
     await cb.message.answer(
         f"Выбрано: {tech['name']}\n"
-        f"Цена: {format_price(tech['price_hour'])}/час - {format_price(tech['price_shift'])}/смена\n\n"
-        "Сколько смен нужно? (1 смена = 8 часов)",
+        f"Цена: {fmt(tech['price_hour'])}/час — {fmt(tech['price_day'])}/смена\n\n"
+        "Сколько смен нужно?\n"
+        "(1 смена = 1 рабочий день = 8 часов)",
         reply_markup=kb_shifts()
     )
 
@@ -355,10 +373,10 @@ async def choose_shifts(cb: CallbackQuery, state: FSMContext):
 
     count = shift.get("count", 0)
     if count > 0:
-        total = tech.get("price_shift", 0) * count
-        price_line = f"Итого: {format_price(total)}"
+        total      = tech.get("price_day", 0) * count
+        price_line = f"Итого: {fmt(total)}"
     else:
-        price_line = f"Стоимость: {format_price(tech.get('price_hour', 0))}/час - уточним"
+        price_line = f"Стоимость: {fmt(tech.get('price_hour', 0))}/час — уточним"
 
     await cb.message.answer(
         f"Смены: {shift['name']}\n"
@@ -389,26 +407,32 @@ async def enter_location(message: Message, state: FSMContext):
 @dp.message(Order.entering_phone, F.contact)
 async def enter_phone_contact(message: Message, state: FSMContext):
     await state.update_data(phone=message.contact.phone_number)
-    await state.set_state(Order.entering_comment)
+    await state.set_state(Order.choosing_payment)
     await message.answer(
-        "Опишите задачу подробнее:",
+        "Выберите форму оплаты:",
         reply_markup=ReplyKeyboardRemove()
     )
-    await message.answer(
-        "Или нажмите Пропустить:",
-        reply_markup=kb_skip()
-    )
+    await message.answer("👇", reply_markup=kb_payment())
 
 @dp.message(Order.entering_phone)
 async def enter_phone_text(message: Message, state: FSMContext):
     await state.update_data(phone=message.text)
-    await state.set_state(Order.entering_comment)
+    await state.set_state(Order.choosing_payment)
     await message.answer(
-        "Опишите задачу подробнее:",
+        "Выберите форму оплаты:",
         reply_markup=ReplyKeyboardRemove()
     )
-    await message.answer(
-        "Или нажмите Пропустить:",
+    await message.answer("👇", reply_markup=kb_payment())
+
+@dp.callback_query(F.data.startswith("pay_"), Order.choosing_payment)
+async def choose_payment(cb: CallbackQuery, state: FSMContext):
+    key = cb.data.replace("pay_", "")
+    await state.update_data(payment=key)
+    await state.set_state(Order.entering_comment)
+    await cb.message.answer(
+        f"Оплата: {PAYMENT[key]['name']}\n\n"
+        "Опишите задачу подробнее\n"
+        "или нажмите Пропустить:",
         reply_markup=kb_skip()
     )
 
@@ -441,7 +465,7 @@ async def confirm_order(cb: CallbackQuery, state: FSMContext):
     await cb.message.answer(
         "Заявка принята!\n\n"
         "Свяжемся с вами в течение 15 минут.\n\n"
-        "Можете прислать фото прямо в этот чат - "
+        "Можете прислать фото прямо в этот чат —\n"
         "это поможет точнее назвать цену.\n\n"
         "Спасибо, что выбрали VTehnike 24!",
         reply_markup=kb_main()
@@ -450,10 +474,7 @@ async def confirm_order(cb: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "confirm_no", Order.confirm)
 async def cancel_order(cb: CallbackQuery, state: FSMContext):
     await state.clear()
-    await cb.message.answer(
-        "Хорошо, начнём заново:",
-        reply_markup=kb_main()
-    )
+    await cb.message.answer("Хорошо, начнём заново:", reply_markup=kb_main())
 
 # ─── ФОТО ─────────────────────────────────────────────────────────────────────
 @dp.message(F.photo)
@@ -476,14 +497,11 @@ async def fallback(message: Message, state: FSMContext):
     current = await state.get_state()
     if current:
         return
-    await message.answer(
-        "Воспользуйтесь меню:",
-        reply_markup=kb_main()
-    )
+    await message.answer("Воспользуйтесь меню:", reply_markup=kb_main())
 
 # ─── ЗАПУСК ───────────────────────────────────────────────────────────────────
 async def main():
-    print("VTehnike 24 Bot v3.0 запущен!")
+    print("VTehnike 24 Bot v4.0 запущен!")
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
