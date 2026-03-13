@@ -25,7 +25,7 @@ from aiogram.filters import CommandStart, Command
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────────────────────
 BOT_TOKEN = "7151969834:AAHLEnwxwfpaaERnJaOYiiA6ctXJoxvR4C8"    # Токен от @BotFather
 OWNER_ID   = "125380747"      # Ваш Telegram ID от @userinfobot
-DB_FILE = "/app/vtehnike.db"  # файл базы данных
+DB_FILE    = "/app/vtehnike.db"  # файл базы данных
 # ──────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
@@ -309,9 +309,9 @@ async def notify_owner(data: dict, user, order_id: int):
     body = order_summary(data).replace("Заявка на аренду:\n\n","").replace("Заявка на ремонт:\n\n","")
     # кнопки смены статуса
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ В работу",    callback_data=f"setstatus_{order_id}_{user.id}_в работе")],
-        [InlineKeyboardButton(text="✅ Выполнено",   callback_data=f"setstatus_{order_id}_{user.id}_выполнено")],
-        [InlineKeyboardButton(text="❌ Отменить",    callback_data=f"setstatus_{order_id}_{user.id}_отменена")],
+        [InlineKeyboardButton(text="▶️ В работу",    callback_data=f"ss_{order_id}_{user.id}_inwork")],
+        [InlineKeyboardButton(text="✅ Выполнено",   callback_data=f"ss_{order_id}_{user.id}_done")],
+        [InlineKeyboardButton(text="❌ Отменить",    callback_data=f"ss_{order_id}_{user.id}_cancel")],
     ])
     await bot.send_message(OWNER_ID, header + body, reply_markup=kb)
 
@@ -463,15 +463,18 @@ async def cmd_set_status(message: Message):
         return
     await _apply_status(message, order_id, status)
 
-@dp.callback_query(F.data.startswith("setstatus_"))
+@dp.callback_query(F.data.startswith("ss_"))
 async def cb_set_status(cb: CallbackQuery):
     if cb.from_user.id != OWNER_ID:
         return
-    # формат: setstatus_42_123456789_выполнено
-    parts    = cb.data.split("_", 3)
+    # формат: ss_42_123456789_inwork
+    parts    = cb.data.split("_")  # ss, order_id, user_id, status_code
     order_id = int(parts[1])
-    status   = parts[3]
-    await _apply_status(cb.message, order_id, status, user_id=int(parts[2]))
+    user_id  = int(parts[2])
+    code     = parts[3]
+    status_map = {"inwork": "в работе", "done": "выполнено", "cancel": "отменена"}
+    status   = status_map.get(code, code)
+    await _apply_status(cb.message, order_id, status, user_id=user_id)
     await cb.answer(f"Статус изменён: {status}")
 
 async def _apply_status(msg_or_message, order_id: int, status: str, user_id: int = None):
