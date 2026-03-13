@@ -46,18 +46,18 @@ REPAIR_SERVICES = {
 # ─── ТЕХНИКА ДЛЯ АРЕНДЫ ───────────────────────────────────────────────────────
 # 1 смена = 1 рабочий день = 8 часов
 RENTAL_TECH = {
-    "exc_mini":     {"name": "Мини-экскаватор (до 6т)",          "price_hour": 1800,  "price_day": 14400},
-    "exc_mid":      {"name": "Экскаватор средний (6-20т)",       "price_hour": 2500,  "price_day": 20000},
-    "exc_heavy":    {"name": "Экскаватор тяжёлый (20т+)",        "price_hour": 3500,  "price_day": 28000},
-    "exc_loader":   {"name": "Экскаватор-погрузчик (JCB, Case)", "price_hour": 2200,  "price_day": 17600},
-    "loader_front": {"name": "Погрузчик фронтальный",            "price_hour": 2000,  "price_day": 16000},
-    "loader_mini":  {"name": "Мини-погрузчик (Bobcat)",          "price_hour": 1800,  "price_day": 14400},
-    "bulldozer":    {"name": "Бульдозер",                        "price_hour": 3000,  "price_day": 24000},
-    "grader":       {"name": "Автогрейдер",                      "price_hour": 3200,  "price_day": 25600},
-    "crane":        {"name": "Автокран (25-50т)",                "price_hour": 3500,  "price_day": 28000},
-    "dump":         {"name": "Самосвал (10-20т)",                "price_hour": 1500,  "price_day": 12000},
-    "manipulator":  {"name": "Манипулятор",                      "price_hour": 2000,  "price_day": 16000},
-    "compactor":    {"name": "Каток дорожный",                   "price_hour": 2500,  "price_day": 20000},
+    "exc_mini":     {"name": "Мини-экскаватор (до 6т)",          "price_hour": 1800,  "price_day": 14400,  "from": True},
+    "exc_mid":      {"name": "Экскаватор средний (6-20т)",       "price_hour": 2500,  "price_day": 20000,  "from": True},
+    "exc_heavy":    {"name": "Экскаватор тяжёлый (20т+)",        "price_hour": 3500,  "price_day": 28000,  "from": True},
+    "exc_loader":   {"name": "Экскаватор-погрузчик (JCB, Case)", "price_hour": 2200,  "price_day": 17600,  "from": True},
+    "loader_front": {"name": "Погрузчик фронтальный",            "price_hour": 2000,  "price_day": 16000,  "from": True},
+    "loader_mini":  {"name": "Мини-погрузчик (Bobcat)",          "price_hour": 1800,  "price_day": 14400,  "from": True},
+    "bulldozer":    {"name": "Бульдозер",                        "price_hour": 3000,  "price_day": 24000,  "from": True},
+    "grader":       {"name": "Автогрейдер",                      "price_hour": 3200,  "price_day": 25600,  "from": True},
+    "crane":        {"name": "Автокран (25-50т)",                "price_hour": 3500,  "price_day": 28000,  "from": True},
+    "dump":         {"name": "Самосвал (10-20т)",                "price_hour": 1500,  "price_day": 12000,  "from": True},
+    "manipulator":  {"name": "Манипулятор",                      "price_hour": 2000,  "price_day": 16000,  "from": True},
+    "compactor":    {"name": "Каток дорожный",                   "price_hour": 2500,  "price_day": 20000,  "from": True},
 }
 
 # ─── СМЕНЫ (1 смена = 1 календарный день) ────────────────────────────────────
@@ -175,8 +175,9 @@ def kb_phone():
     )
 
 # ─── ХЕЛПЕРЫ ──────────────────────────────────────────────────────────────────
-def fmt(amount: int) -> str:
-    return f"{amount:,}".replace(",", " ") + " руб."
+def fmt(amount: int, prefix: bool = False) -> str:
+    s = f"{amount:,}".replace(",", " ") + " руб."
+    return ("от " + s) if prefix else s
 
 def order_summary(data: dict) -> str:
     order_type = data.get("order_type", "repair")
@@ -188,9 +189,9 @@ def order_summary(data: dict) -> str:
         count = shift.get("count", 0)
         if count > 0:
             total      = tech.get("price_day", 0) * count
-            price_line = f"{shift['name']} x {fmt(tech.get('price_day', 0))} = {fmt(total)}"
+            price_line = f"{shift['name']} x {fmt(tech.get('price_day', 0), True)} = от {fmt(total)}"
         else:
-            price_line = f"{fmt(tech.get('price_hour', 0))}/час — объём уточним"
+            price_line = f"{fmt(tech.get('price_hour', 0), True)}/час — объём уточним"
         return (
             "Заявка на аренду:\n\n"
             f"Техника:      {tech.get('name', '-')}\n"
@@ -259,7 +260,7 @@ async def cmd_prices(message: Message):
 async def cmd_rental_prices(message: Message):
     text = "Прайс — Аренда спецтехники\n1 смена = 1 рабочий день = 8 часов\n\n"
     for t in RENTAL_TECH.values():
-        text += f"{t['name']}\n{fmt(t['price_hour'])}/час — {fmt(t['price_day'])}/смена\n\n"
+        text += f"{t['name']}\n{fmt(t['price_hour'], True)}/час — {fmt(t['price_day'], True)}/смена\n\n"
     text += "С оператором — Выезд по МО — ИП и ООО"
     await message.answer(text)
 
@@ -356,7 +357,7 @@ async def choose_rental_tech(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Order.choosing_shifts)
     await cb.message.answer(
         f"Выбрано: {tech['name']}\n"
-        f"Цена: {fmt(tech['price_hour'])}/час — {fmt(tech['price_day'])}/смена\n\n"
+        f"Цена: {fmt(tech['price_hour'], True)}/час — {fmt(tech['price_day'], True)}/смена\n\n"
         "Сколько смен нужно?\n"
         "(1 смена = 1 рабочий день = 8 часов)",
         reply_markup=kb_shifts()
@@ -374,9 +375,9 @@ async def choose_shifts(cb: CallbackQuery, state: FSMContext):
     count = shift.get("count", 0)
     if count > 0:
         total      = tech.get("price_day", 0) * count
-        price_line = f"Итого: {fmt(total)}"
+        price_line = f"Итого: от {fmt(total)}"
     else:
-        price_line = f"Стоимость: {fmt(tech.get('price_hour', 0))}/час — уточним"
+        price_line = f"Стоимость: {fmt(tech.get('price_hour', 0), True)}/час — уточним"
 
     await cb.message.answer(
         f"Смены: {shift['name']}\n"
