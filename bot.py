@@ -25,7 +25,7 @@ from aiogram.filters import CommandStart, Command
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────────────────────
 BOT_TOKEN = "7151969834:AAHLEnwxwfpaaERnJaOYiiA6ctXJoxvR4C8"    # Токен от @BotFather
 OWNER_ID   = 125380747      # Ваш Telegram ID от @userinfobot
-DB_FILE    = "/app/vtehnike.db"  # файл базы данных
+DB_FILE = "/data/vtehnike.db"  # файл базы данных
 # ──────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
