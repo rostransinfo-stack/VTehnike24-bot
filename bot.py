@@ -7,6 +7,7 @@ VTehnike 24 — Telegram Bot v5.0
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F
@@ -28,6 +29,81 @@ OWNER_ID   = "125380747"      # Ваш Telegram ID от @userinfobot
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp  = Dispatcher(storage=MemoryStorage())
+
+# ─── УЧЁТ ПОЛЬЗОВАТЕЛЕЙ ───────────────────────────────────────────────────────
+USERS_FILE = "users.json"
+
+def load_users() -> dict:
+    try:
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_users(users: dict):
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+
+def track_user(user, order_type: str = None):
+    """Записать пользователя. order_type = 'repair' | 'rental' | None (просто зашёл)"""
+    users = load_users()
+    uid   = str(user.id)
+    now   = datetime.now().strftime("%d.%m.%Y %H:%M")
+
+    if uid not in users:
+        users[uid] = {
+            "id":         user.id,
+            "name":       user.full_name,
+            "username":   user.username or "",
+            "first_seen": now,
+            "last_seen":  now,
+            "visits":     1,
+            "orders":     [],
+        }
+    else:
+        users[uid]["last_seen"] = now
+        users[uid]["visits"]   += 1
+        users[uid]["name"]      = user.full_name  # обновляем имя
+
+    if order_type:
+        users[uid]["orders"].append({"type": order_type, "date": now})
+
+    save_users(users)
+
+def get_stats() -> str:
+    users = load_users()
+    if not users:
+        return "Пока никто не заходил в бот."
+
+    total        = len(users)
+    with_orders  = sum(1 for u in users.values() if u.get("orders"))
+    total_orders = sum(len(u.get("orders", [])) for u in users.values())
+    repair_count = sum(
+        sum(1 for o in u.get("orders", []) if o["type"] == "repair")
+        for u in users.values()
+    )
+    rental_count = sum(
+        sum(1 for o in u.get("orders", []) if o["type"] == "rental")
+        for u in users.values()
+    )
+
+    # последние 5 пользователей
+    sorted_users = sorted(users.values(), key=lambda u: u["last_seen"], reverse=True)
+    recent = ""
+    for u in sorted_users[:5]:
+        orders_count = len(u.get("orders", []))
+        tag = f"@{u['username']}" if u.get("username") else f"ID {u['id']}"
+        recent += f"  {u['name']} ({tag}) — {orders_count} заявок, был {u['last_seen']}\n"
+
+    return (
+        f"Статистика бота VTehnike 24\n\n"
+        f"Всего пользователей:  {total}\n"
+        f"Оставили заявку:      {with_orders}\n"
+        f"Всего заявок:         {total_orders}\n"
+        f"  из них ремонт:      {repair_count}\n"
+        f"  из них аренда:      {rental_count}\n\n"
+        f"Последние 5 активных:\n{recent}"
+    )
 
 # ─── УСЛУГИ РЕМОНТА ───────────────────────────────────────────────────────────
 REPAIR_SERVICES = {
@@ -350,6 +426,7 @@ async def notify_owner(data: dict, user):
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
+    track_user(message.from_user)
     name = message.from_user.first_name or "Добро пожаловать"
     await message.answer(
         f"Привет, {name}! Добро пожаловать в VTehnike 24!\n\n"
@@ -388,6 +465,12 @@ async def cmd_contacts(message: Message):
         "Пн-Сб 8:00-20:00\n"
         "Экстренные выезды — круглосуточно"
     )
+
+@dp.message(Command("stats"))
+async def cmd_stats(message: Message):
+    if message.from_user.id != OWNER_ID:
+        return  # только владелец видит статистику
+    await message.answer(get_stats())
 
 # ─── ГЛАВНОЕ МЕНЮ ─────────────────────────────────────────────────────────────
 @dp.callback_query(F.data == "back_main")
@@ -583,6 +666,7 @@ async def enter_comment(message: Message, state: FSMContext):
 async def confirm_order(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     await notify_owner(data, cb.from_user)
+    track_user(cb.from_user, order_type=data.get("order_type", "repair"))
     await state.clear()
     msg = (
         "Заявка принята!\n\n"
