@@ -1,5 +1,5 @@
 """
-VTehnike 24 — Telegram Bot v7.0
+VTehnike 24 — Telegram Bot v8.0
 + SQLite база данных (не теряется при передеплое)
 + Статусы заявок с уведомлением клиенту
 + Отзыв после выполнения
@@ -176,6 +176,25 @@ def db_get_pending_orders(minutes: int = 120) -> list:
             pass
     return result
 
+
+def db_get_active_orders() -> list:
+    """Все заявки кроме выполненных и отменённых"""
+    with db_connect() as con:
+        rows = con.execute(
+            """SELECT o.id, o.user_id, o.order_type, o.status, o.created_at,
+                      u.name, u.username
+               FROM orders o
+               LEFT JOIN users u ON o.user_id = u.id
+               WHERE o.status NOT IN ('выполнено', 'отменена')
+               ORDER BY o.created_at DESC"""
+        ).fetchall()
+    return rows
+
+def db_get_order_user_id(order_id: int) -> int:
+    with db_connect() as con:
+        row = con.execute("SELECT user_id FROM orders WHERE id=?", (order_id,)).fetchone()
+    return row[0] if row else None
+
 def db_get_all_user_ids() -> list:
     with db_connect() as con:
         rows = con.execute("SELECT id FROM users").fetchall()
@@ -269,6 +288,9 @@ class Order(StatesGroup):
     entering_comment  = State()
     confirm           = State()
 
+class OwnerReply(StatesGroup):
+    waiting_message = State()
+
 class Review(StatesGroup):
     waiting_rating  = State()
     waiting_comment = State()
@@ -349,9 +371,10 @@ async def notify_owner(data: dict, user, order_id: int):
     body = order_summary(data).replace("Заявка на аренду:\n\n","").replace("Заявка на ремонт:\n\n","")
     # кнопки смены статуса
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ В работу",    callback_data=f"ss_{order_id}_{user.id}_inwork")],
-        [InlineKeyboardButton(text="✅ Выполнено",   callback_data=f"ss_{order_id}_{user.id}_done")],
-        [InlineKeyboardButton(text="❌ Отменить",    callback_data=f"ss_{order_id}_{user.id}_cancel")],
+        [InlineKeyboardButton(text="▶️ В работу",        callback_data=f"ss_{order_id}_{user.id}_inwork")],
+        [InlineKeyboardButton(text="✅ Выполнено",       callback_data=f"ss_{order_id}_{user.id}_done")],
+        [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_{order_id}_{user.id}")],
+        [InlineKeyboardButton(text="❌ Отменить",        callback_data=f"ss_{order_id}_{user.id}_cancel")],
     ])
     await bot.send_message(OWNER_ID, header + body, reply_markup=kb)
 
@@ -504,6 +527,50 @@ async def cmd_set_status(message: Message):
         return
     await _apply_status(message, order_id, status)
 
+
+@dp.callback_query(F.data.startswith("msg_"))
+async def cb_message_client(cb: CallbackQuery, state: FSMContext):
+    if cb.from_user.id != OWNER_ID:
+        return
+    parts    = cb.data.split("_")
+    order_id = int(parts[1])
+    user_id  = int(parts[2])
+    await state.update_data(reply_order_id=order_id, reply_user_id=user_id)
+    await state.set_state(OwnerReply.waiting_message)
+    await cb.message.answer(
+        f"Введите сообщение для клиента по заявке #{order_id}:\n"
+        f"(оно придёт от имени бота)",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Отмена", callback_data="cancel_reply")]
+        ])
+    )
+    await cb.answer()
+
+@dp.callback_query(F.data == "cancel_reply")
+async def cancel_reply(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await cb.message.answer("Отменено.")
+    await cb.answer()
+
+@dp.message(OwnerReply.waiting_message)
+async def send_message_to_client(message: Message, state: FSMContext):
+    if message.from_user.id != OWNER_ID:
+        return
+    data     = await state.get_data()
+    order_id = data.get("reply_order_id")
+    user_id  = data.get("reply_user_id")
+    await state.clear()
+    try:
+        await bot.send_message(
+            user_id,
+            f"Сообщение от VTehnike 24 по заявке #{order_id}:\n\n"
+            f"{message.text}\n\n"
+            f"Если есть вопросы — +7 (992) 350-80-08"
+        )
+        await message.answer(f"Сообщение отправлено клиенту по заявке #{order_id}.")
+    except Exception:
+        await message.answer("Не удалось отправить — клиент заблокировал бота или удалил чат.")
+
 @dp.callback_query(F.data.startswith("ss_"))
 async def cb_set_status(cb: CallbackQuery):
     if cb.from_user.id != OWNER_ID:
@@ -543,6 +610,34 @@ async def _apply_status(msg_or_message, order_id: int, status: str, user_id: int
     except Exception:
         pass
     await msg_or_message.answer(f"Статус заявки #{order_id} изменён на «{status}», клиент уведомлён.")
+
+
+@dp.message(Command("orders"))
+async def cmd_orders(message: Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    rows = db_get_active_orders()
+    if not rows:
+        await message.answer("Нет активных заявок.")
+        return
+    for row in rows:
+        order_id, user_id, order_type, status, created_at, name, username = row
+        label   = "АРЕНДА" if order_type == "rental" else "РЕМОНТ"
+        tag     = f"@{username}" if username else f"ID {user_id}"
+        client  = f"{name} ({tag})"
+        status_emoji = {"принята": "🆕", "в работе": "🔧"}.get(status, "📋")
+        await message.answer(
+            f"{status_emoji} Заявка #{order_id} — {label}\n"
+            f"Клиент: {client}\n"
+            f"Статус: {status}\n"
+            f"Создана: {created_at}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="▶️ В работу",       callback_data=f"ss_{order_id}_{user_id}_inwork")],
+                [InlineKeyboardButton(text="✅ Выполнено",      callback_data=f"ss_{order_id}_{user_id}_done")],
+                [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_{order_id}_{user_id}")],
+                [InlineKeyboardButton(text="❌ Отменить",       callback_data=f"ss_{order_id}_{user_id}_cancel")],
+            ])
+        )
 
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
@@ -840,12 +935,44 @@ async def cancel_order(cb: CallbackQuery, state: FSMContext):
 
 # ─── ФОТО ─────────────────────────────────────────────────────────────────────
 @dp.message(F.photo)
-async def handle_photo(message: Message):
+async def handle_photo(message: Message, state: FSMContext):
+    # Пересылаем владельцу
     await bot.forward_message(OWNER_ID, message.chat.id, message.message_id)
-    await bot.send_message(OWNER_ID, f"Фото от: {message.from_user.full_name} (ID: {message.from_user.id})")
-    await message.answer("Фото получено! Оценим и свяжемся в течение 15 минут.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Главное меню", callback_data="back_main")]
-    ]))
+
+    # Ищем последнюю активную заявку клиента
+    with db_connect() as con:
+        row = con.execute(
+            """SELECT id FROM orders
+               WHERE user_id=? AND status NOT IN ('выполнено','отменена')
+               ORDER BY created_at DESC LIMIT 1""",
+            (message.from_user.id,)
+        ).fetchone()
+
+    if row:
+        order_id = row[0]
+        await bot.send_message(
+            OWNER_ID,
+            f"Фото от {message.from_user.full_name} (ID: {message.from_user.id})\n"
+            f"Прикреплено к заявке #{order_id}"
+        )
+        await message.answer(
+            f"Фото получено и прикреплено к заявке #{order_id}.\nСвяжемся в течение 15 минут.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Главное меню", callback_data="back_main")]
+            ])
+        )
+    else:
+        await bot.send_message(
+            OWNER_ID,
+            f"Фото от {message.from_user.full_name} (ID: {message.from_user.id})\n"
+            f"Активных заявок нет"
+        )
+        await message.answer(
+            "Фото получено! Оценим и свяжемся в течение 15 минут.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Главное меню", callback_data="back_main")]
+            ])
+        )
 
 # ─── FALLBACK ─────────────────────────────────────────────────────────────────
 @dp.message()
@@ -882,7 +1009,7 @@ async def reminder_task():
 # ─── ЗАПУСК ───────────────────────────────────────────────────────────────────
 async def main():
     db_init()
-    print("VTehnike 24 Bot v7.0 запущен!")
+    print("VTehnike 24 Bot v8.0 запущен!")
     asyncio.create_task(reminder_task())
     await dp.start_polling(bot, skip_updates=True)
 
