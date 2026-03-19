@@ -1,5 +1,5 @@
 """
-VTehnike 24 — Telegram Bot v9.0
+VTehnike 24 — Telegram Bot v10.0
 + SQLite база данных (не теряется при передеплое)
 + Статусы заявок с уведомлением клиенту
 + Отзыв после выполнения
@@ -211,6 +211,54 @@ def db_get_all_user_ids() -> list:
     with db_connect() as con:
         rows = con.execute("SELECT id FROM users").fetchall()
     return [r[0] for r in rows]
+
+
+# ─── РАБОЧЕЕ ВРЕМЯ ────────────────────────────────────────────────────────────
+def is_working_hours() -> bool:
+    """Пн-Сб 8:00-20:00"""
+    now = datetime.now()
+    if now.weekday() == 6:  # воскресенье
+        return False
+    return 8 <= now.hour < 20
+
+def db_get_weekly_stats() -> str:
+    """Сводка за последние 7 дней"""
+    with db_connect() as con:
+        from datetime import timedelta
+        week_ago = (datetime.now() - timedelta(days=7)).strftime("%d.%m.%Y")
+        new_users = con.execute(
+            "SELECT COUNT(*) FROM users WHERE first_seen >= ?", (week_ago,)
+        ).fetchone()[0]
+        new_orders = con.execute(
+            "SELECT COUNT(*) FROM orders WHERE created_at >= ?", (week_ago,)
+        ).fetchone()[0]
+        repair_cnt = con.execute(
+            "SELECT COUNT(*) FROM orders WHERE order_type='repair' AND created_at >= ?", (week_ago,)
+        ).fetchone()[0]
+        rental_cnt = con.execute(
+            "SELECT COUNT(*) FROM orders WHERE order_type='rental' AND created_at >= ?", (week_ago,)
+        ).fetchone()[0]
+        done_cnt = con.execute(
+            "SELECT COUNT(*) FROM orders WHERE status='выполнено' AND updated_at >= ?", (week_ago,)
+        ).fetchone()[0]
+        avg_rating = con.execute(
+            "SELECT AVG(rating) FROM reviews WHERE created_at >= ?", (week_ago,)
+        ).fetchone()[0]
+        callbacks = con.execute(
+            "SELECT COUNT(*) FROM users WHERE last_seen >= ? AND visits > 1", (week_ago,)
+        ).fetchone()[0]
+    rating_str = f"{avg_rating:.1f}/5" if avg_rating else "нет"
+    return (
+        f"Сводка за 7 дней\n"
+        f"{(datetime.now()).strftime('%d.%m.%Y')}\n\n"
+        f"Новых пользователей: {new_users}\n"
+        f"Новых заявок:        {new_orders}\n"
+        f"  ремонт:            {repair_cnt}\n"
+        f"  аренда:            {rental_cnt}\n"
+        f"Выполнено:           {done_cnt}\n"
+        f"Средний отзыв:       {rating_str}\n"
+        f"Активных клиентов:   {callbacks}"
+    )
 
 # ─── ДАННЫЕ ───────────────────────────────────────────────────────────────────
 REPAIR_SERVICES = {
@@ -501,6 +549,12 @@ def kb_review_comment():
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     db_track_user(message.from_user)
+    if not is_working_hours():
+        await message.answer(
+            "Мы работаем Пн-Сб с 8:00 до 20:00.\n"
+            "Заявку можно оставить прямо сейчас — ответим утром в первую очередь.\n"
+            "Экстренный выезд: +7 (992) 350-80-08"
+        )
     name = message.from_user.first_name or "Добро пожаловать"
     await message.answer(
         f"Привет, {name}! Добро пожаловать в VTehnike 24!\n\n"
@@ -514,6 +568,39 @@ async def cmd_start(message: Message, state: FSMContext):
     )
 
 # ─── КОМАНДЫ ВЛАДЕЛЬЦА ────────────────────────────────────────────────────────
+
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    is_owner = message.from_user.id == OWNER_ID
+    if is_owner:
+        await message.answer(
+            "Команды владельца:\n\n"
+            "/orders — активные заявки\n"
+            "/stats — статистика всего времени\n"
+            "/week — сводка за 7 дней\n"
+            "/status [№] [статус] — сменить статус\n"
+            "/broadcast [текст] — рассылка всем\n"
+            "/prices — прайс ремонт\n"
+            "/rental — прайс аренда\n"
+            "/contacts — контакты\n\n"
+            "Статусы: принята, в работе, выполнено, отменена"
+        )
+    else:
+        await message.answer(
+            "Доступные команды:\n\n"
+            "/start — главное меню\n"
+            "/prices — прайс на ремонт\n"
+            "/rental — прайс на аренду\n"
+            "/contacts — контакты и телефон",
+            reply_markup=kb_main()
+        )
+
+@dp.message(Command("week"))
+async def cmd_week(message: Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    await message.answer(db_get_weekly_stats())
+
 @dp.message(Command("stats"))
 async def cmd_stats(message: Message):
     if message.from_user.id != OWNER_ID:
@@ -971,7 +1058,22 @@ async def confirm_order(cb: CallbackQuery, state: FSMContext):
     await notify_owner(data, cb.from_user, order_id)
     await state.update_data(last_order_id=order_id)
     await state.clear()
-    msg = f"Заявка #{order_id} принята!\n\nСвяжемся с вами в течение 15 минут.\n\n"
+    # Примерная цена для клиента
+    price_hint = ""
+    if data.get("order_type") == "repair":
+        svc = REPAIR_SERVICES.get(data.get("service",""), {})
+        urg = URGENCY.get(data.get("urgency","standard"), {})
+        price_hint = f"Примерная стоимость: {svc.get('price','')} ({urg.get('mult','')})\n\n"
+    elif data.get("order_type") == "rental":
+        tech  = RENTAL_TECH.get(data.get("rental_tech",""), {})
+        shift = SHIFTS.get(data.get("shifts","own"), {})
+        count = shift.get("count", 0)
+        if count > 0:
+            total = tech.get("price_day", 0) * count
+            price_hint = f"Примерная стоимость: от {fmt(total)}\n\n"
+        else:
+            price_hint = f"Стоимость: {fmt(tech.get('price_hour',0), True)}/час\n\n"
+    msg = f"Заявка #{order_id} принята!\n\nСвяжемся с вами в течение 15 минут.\n\n" + price_hint
     if data.get("order_type") == "repair":
         msg += "Можете прислать фото неисправности — поможет точнее назвать цену.\n\n"
     msg += "Спасибо, что выбрали VTehnike 24!"
@@ -1055,11 +1157,30 @@ async def reminder_task():
             logging.error(f"Reminder error: {e}")
         await asyncio.sleep(30 * 60)  # следующая проверка через 30 минут
 
+
+async def weekly_report_task():
+    """Еженедельная сводка каждый понедельник в 9:00"""
+    while True:
+        now = datetime.now()
+        # следующий понедельник 9:00
+        days_ahead = (7 - now.weekday()) % 7 or 7
+        next_monday = now.replace(hour=9, minute=0, second=0) 
+        next_monday = next_monday.replace(day=now.day + days_ahead)
+        wait_seconds = (next_monday - now).total_seconds()
+        if wait_seconds < 0:
+            wait_seconds += 7 * 24 * 3600
+        await asyncio.sleep(wait_seconds)
+        try:
+            await bot.send_message(OWNER_ID, db_get_weekly_stats())
+        except Exception as e:
+            logging.error(f"Weekly report error: {e}")
+
 # ─── ЗАПУСК ───────────────────────────────────────────────────────────────────
 async def main():
     db_init()
-    print("VTehnike 24 Bot v9.0 запущен!")
+    print("VTehnike 24 Bot v10.0 запущен!")
     asyncio.create_task(reminder_task())
+    asyncio.create_task(weekly_report_task())
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
