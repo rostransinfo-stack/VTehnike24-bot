@@ -854,6 +854,31 @@ async def fallback(message: Message, state: FSMContext):
         return
     await message.answer("Воспользуйтесь меню:", reply_markup=kb_main())
 
+
+# ─── ФОНОВАЯ ЗАДАЧА — НАПОМИНАНИЕ О ЗАЯВКЕ ───────────────────────────────────
+async def reminder_task():
+    """Каждые 30 минут проверяем заявки которые висят более 2 часов без ответа"""
+    await asyncio.sleep(60)  # старт через минуту после запуска бота
+    while True:
+        try:
+            pending = db_get_pending_orders(minutes=120)
+            for order in pending:
+                label = "АРЕНДА" if order["type"] == "rental" else "РЕМОНТ"
+                await bot.send_message(
+                    OWNER_ID,
+                    f"НАПОМИНАНИЕ\n\n"
+                    f"Заявка #{order['id']} ({label}) висит без ответа!\n"
+                    f"Создана: {order['created_at']}\n\n"
+                    f"Свяжись с клиентом.",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="▶️ В работу", callback_data=f"ss_{order['id']}_{order['user_id']}_inwork")],
+                        [InlineKeyboardButton(text="❌ Отменить", callback_data=f"ss_{order['id']}_{order['user_id']}_cancel")],
+                    ])
+                )
+        except Exception as e:
+            logging.error(f"Reminder error: {e}")
+        await asyncio.sleep(30 * 60)  # следующая проверка через 30 минут
+
 # ─── ЗАПУСК ───────────────────────────────────────────────────────────────────
 async def main():
     db_init()
