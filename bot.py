@@ -527,16 +527,17 @@ def kb_phone():
         resize_keyboard=True, one_time_keyboard=True
     )
 
-def kb_rating():
+def kb_rating(order_id: int = 0):
+    oid = order_id
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="⭐ 1", callback_data="rev_1"),
-            InlineKeyboardButton(text="⭐ 2", callback_data="rev_2"),
-            InlineKeyboardButton(text="⭐ 3", callback_data="rev_3"),
-            InlineKeyboardButton(text="⭐ 4", callback_data="rev_4"),
-            InlineKeyboardButton(text="⭐ 5", callback_data="rev_5"),
+            InlineKeyboardButton(text="⭐ 1", callback_data=f"rev_{oid}_1"),
+            InlineKeyboardButton(text="⭐ 2", callback_data=f"rev_{oid}_2"),
+            InlineKeyboardButton(text="⭐ 3", callback_data=f"rev_{oid}_3"),
+            InlineKeyboardButton(text="⭐ 4", callback_data=f"rev_{oid}_4"),
+            InlineKeyboardButton(text="⭐ 5", callback_data=f"rev_{oid}_5"),
         ],
-        [InlineKeyboardButton(text="Пропустить", callback_data="rev_skip")]
+        [InlineKeyboardButton(text="Пропустить", callback_data=f"rev_{oid}_skip")]
     ])
 
 def kb_review_comment():
@@ -705,7 +706,7 @@ async def _apply_status(msg_or_message, order_id: int, status: str, user_id: int
             await bot.send_message(
                 client_id,
                 "Оцените нашу работу — это займёт 30 секунд и поможет нам стать лучше:",
-                reply_markup=kb_rating()
+                reply_markup=kb_rating(order_id)
             )
     except Exception:
         pass
@@ -763,13 +764,19 @@ async def cmd_broadcast(message: Message):
 # ─── ОТЗЫВЫ ───────────────────────────────────────────────────────────────────
 @dp.callback_query(F.data.startswith("rev_"))
 async def handle_review(cb: CallbackQuery, state: FSMContext):
-    data = cb.data.replace("rev_", "")
-    if data == "skip":
+    # формат: rev_{order_id}_{rating|skip}
+    parts = cb.data.split("_")
+    order_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    action   = parts[2] if len(parts) > 2 else "skip"
+
+    if action == "skip":
         await cb.message.answer("Спасибо! Будем рады видеть вас снова.", reply_markup=kb_main())
+        await cb.answer()
         return
-    if data.isdigit():
-        rating = int(data)
-        await state.update_data(review_rating=rating, review_msg_id=cb.message.message_id)
+
+    if action.isdigit():
+        rating = int(action)
+        await state.update_data(review_rating=rating, review_order_id=order_id)
         await state.set_state(Review.waiting_comment)
         stars = "⭐" * rating
         await cb.message.answer(
@@ -781,20 +788,20 @@ async def handle_review(cb: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "rev_comment_skip", Review.waiting_comment)
 async def review_comment_skip(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    db_add_review(cb.from_user.id, data.get("last_order_id", 0), data.get("review_rating", 5), "")
+    db_add_review(cb.from_user.id, data.get("review_order_id", 0), data.get("review_rating", 5), "")
     await state.clear()
     await cb.message.answer("Спасибо за отзыв! Это очень важно для нас.", reply_markup=kb_main())
     await bot.send_message(
         OWNER_ID,
         f"Новый отзыв от {cb.from_user.full_name}:\n"
         f"Оценка: {'⭐' * data.get('review_rating', 5)}\n"
-        f"Заявка #{data.get('last_order_id', '?')}"
+        f"Заявка #{data.get('review_order_id', '?')}"
     )
 
 @dp.message(Review.waiting_comment)
 async def review_comment(message: Message, state: FSMContext):
     data = await state.get_data()
-    db_add_review(message.from_user.id, data.get("last_order_id", 0), data.get("review_rating", 5), message.text)
+    db_add_review(message.from_user.id, data.get("review_order_id", 0), data.get("review_rating", 5), message.text)
     await state.clear()
     await message.answer("Спасибо за отзыв! Это очень важно для нас.", reply_markup=kb_main())
     await bot.send_message(
@@ -802,7 +809,7 @@ async def review_comment(message: Message, state: FSMContext):
         f"Новый отзыв от {message.from_user.full_name}:\n"
         f"Оценка: {'⭐' * data.get('review_rating', 5)}\n"
         f"Комментарий: {message.text}\n"
-        f"Заявка #{data.get('last_order_id', '?')}"
+        f"Заявка #{data.get('review_order_id', '?')}"
     )
 
 # ─── ПРОЧИЕ КОМАНДЫ ───────────────────────────────────────────────────────────
@@ -1056,7 +1063,6 @@ async def confirm_order(cb: CallbackQuery, state: FSMContext):
     summary  = order_summary(data)
     order_id = db_add_order(cb.from_user.id, data.get("order_type","repair"), summary)
     await notify_owner(data, cb.from_user, order_id)
-    await state.update_data(last_order_id=order_id)
     await state.clear()
     # Примерная цена для клиента
     price_hint = ""
