@@ -1,5 +1,5 @@
 """
-VTehnike 24 — Telegram Bot v8.0
+VTehnike 24 — Telegram Bot v9.0
 + SQLite база данных (не теряется при передеплое)
 + Статусы заявок с уведомлением клиенту
 + Отзыв после выполнения
@@ -195,6 +195,18 @@ def db_get_order_user_id(order_id: int) -> int:
         row = con.execute("SELECT user_id FROM orders WHERE id=?", (order_id,)).fetchone()
     return row[0] if row else None
 
+
+def db_get_client_orders(user_id: int) -> list:
+    """Все заявки конкретного клиента, последние 10"""
+    with db_connect() as con:
+        rows = con.execute(
+            """SELECT id, order_type, status, created_at
+               FROM orders WHERE user_id=?
+               ORDER BY created_at DESC LIMIT 10""",
+            (user_id,)
+        ).fetchall()
+    return rows
+
 def db_get_all_user_ids() -> list:
     with db_connect() as con:
         rows = con.execute("SELECT id FROM users").fetchall()
@@ -383,6 +395,7 @@ def kb_main():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔧 Заявка на ремонт", callback_data="start_repair")],
         [InlineKeyboardButton(text="🚜 Аренда техники",   callback_data="start_rental")],
+        [InlineKeyboardButton(text="📋 Мои заявки",       callback_data="my_orders")],
         [InlineKeyboardButton(text="📞 Перезвоните мне",  callback_data="callback_request")],
         [InlineKeyboardButton(text="💰 Прайс-лист",       callback_data="show_prices")],
         [InlineKeyboardButton(text="☎️ Позвонить нам",    callback_data="call_us")],
@@ -734,6 +747,42 @@ async def cmd_contacts(message: Message):
     )
 
 # ─── ГЛАВНОЕ МЕНЮ ─────────────────────────────────────────────────────────────
+
+@dp.callback_query(F.data == "my_orders")
+async def my_orders(cb: CallbackQuery):
+    rows = db_get_client_orders(cb.from_user.id)
+    if not rows:
+        await cb.message.answer(
+            "У вас пока нет заявок.\n\nОставьте первую — ответим в течение 15 минут!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔧 Оставить заявку", callback_data="start_repair")],
+                [InlineKeyboardButton(text="⬅️ Главное меню",    callback_data="back_main")],
+            ])
+        )
+        return
+
+    status_emoji = {
+        "принята":   "🆕",
+        "в работе":  "🔧",
+        "выполнено": "✅",
+        "отменена":  "❌",
+    }
+    text = "Ваши заявки:\n\n"
+    for row in rows:
+        order_id, order_type, status, created_at = row
+        label = "Аренда" if order_type == "rental" else "Ремонт"
+        emoji = status_emoji.get(status, "📋")
+        text += f"{emoji} #{order_id} — {label}\n   Статус: {status}\n   Дата: {created_at}\n\n"
+
+    await cb.message.answer(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔧 Новая заявка",  callback_data="start_repair")],
+            [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_main")],
+        ])
+    )
+    await cb.answer()
+
 @dp.callback_query(F.data == "back_main")
 async def back_main(cb: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -1009,7 +1058,7 @@ async def reminder_task():
 # ─── ЗАПУСК ───────────────────────────────────────────────────────────────────
 async def main():
     db_init()
-    print("VTehnike 24 Bot v8.0 запущен!")
+    print("VTehnike 24 Bot v9.0 запущен!")
     asyncio.create_task(reminder_task())
     await dp.start_polling(bot, skip_updates=True)
 
