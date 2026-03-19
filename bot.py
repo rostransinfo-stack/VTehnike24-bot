@@ -1,16 +1,18 @@
 """
-VTehnike 24 — Telegram Bot v6.0
+VTehnike 24 — Telegram Bot v7.0
 + SQLite база данных (не теряется при передеплое)
 + Статусы заявок с уведомлением клиенту
 + Отзыв после выполнения
 + Рассылка всем пользователям
++ Напоминание владельцу если заявка висит 2 часа
++ Кнопка "Перезвоните мне"
 """
 
 import asyncio
 import json
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
     Message, CallbackQuery,
@@ -24,8 +26,8 @@ from aiogram.filters import CommandStart, Command
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────────────────────
 BOT_TOKEN = "7151969834:AAHLEnwxwfpaaERnJaOYiiA6ctXJoxvR4C8"    # Токен от @BotFather
-OWNER_ID   = 125380747      # Ваш Telegram ID от @userinfobot
-DB_FILE = "/data/vtehnike.db"  # файл базы данных
+OWNER_ID   = "125380747"      # Ваш Telegram ID от @userinfobot
+DB_FILE    = "/data/vtehnike.db"  # файл базы данных
 # ──────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
@@ -155,6 +157,24 @@ def db_get_stats() -> str:
         f"Средний отзыв:   {rating_str}\n\n"
         f"Последние 5 активных:\n{recent_str}"
     )
+
+
+def db_get_pending_orders(minutes: int = 120) -> list:
+    """Вернуть заявки со статусом 'принята' старше N минут"""
+    with db_connect() as con:
+        rows = con.execute(
+            "SELECT id, user_id, order_type, created_at FROM orders WHERE status='принята'"
+        ).fetchall()
+    result = []
+    now = datetime.now()
+    for row in rows:
+        try:
+            created = datetime.strptime(row[3], "%d.%m.%Y %H:%M")
+            if (now - created).total_seconds() > minutes * 60:
+                result.append({"id": row[0], "user_id": row[1], "type": row[2], "created_at": row[3]})
+        except Exception:
+            pass
+    return result
 
 def db_get_all_user_ids() -> list:
     with db_connect() as con:
@@ -297,6 +317,26 @@ def order_summary(data: dict) -> str:
             f"Срок:        {svc.get('days','-')}"
         )
 
+
+async def _handle_callback(message: Message, phone: str, state: FSMContext):
+    user = message.from_user
+    db_track_user(user)
+    await state.clear()
+    await message.answer(
+        "Отлично! Перезвоним вам в течение 15 минут.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    await message.answer("Пока ждёте — можете посмотреть наши услуги:", reply_markup=kb_main())
+    await bot.send_message(
+        OWNER_ID,
+        f"ЗАПРОС НА ЗВОНОК\n"
+        f"{datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+        f"Клиент: {user.full_name}"
+        + (f" (@{user.username})" if user.username else "") +
+        f"\nТелефон: {phone}\n"
+        f"TG ID: {user.id}"
+    )
+
 async def notify_owner(data: dict, user, order_id: int):
     label = "АРЕНДА" if data.get("order_type") == "rental" else "РЕМОНТ"
     header = (
@@ -320,8 +360,9 @@ def kb_main():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔧 Заявка на ремонт", callback_data="start_repair")],
         [InlineKeyboardButton(text="🚜 Аренда техники",   callback_data="start_rental")],
+        [InlineKeyboardButton(text="📞 Перезвоните мне",  callback_data="callback_request")],
         [InlineKeyboardButton(text="💰 Прайс-лист",       callback_data="show_prices")],
-        [InlineKeyboardButton(text="📞 Позвонить нам",    callback_data="call_us")],
+        [InlineKeyboardButton(text="☎️ Позвонить нам",    callback_data="call_us")],
     ])
 
 def kb_repair_services():
@@ -603,6 +644,17 @@ async def back_main(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await cb.message.answer("Главное меню:", reply_markup=kb_main())
 
+
+@dp.callback_query(F.data == "callback_request")
+async def callback_request(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await state.update_data(order_type="callback")
+    await state.set_state(Order.entering_phone)
+    await cb.message.answer(
+        "Оставьте номер телефона — перезвоним в течение 15 минут:",
+        reply_markup=kb_phone()
+    )
+
 @dp.callback_query(F.data == "call_us")
 async def call_us(cb: CallbackQuery):
     await cb.message.answer(
@@ -722,6 +774,10 @@ async def enter_location(message: Message, state: FSMContext):
 
 @dp.message(Order.entering_phone, F.contact)
 async def enter_phone_contact(message: Message, state: FSMContext):
+    data = await state.get_data()
+    if data.get("order_type") == "callback":
+        await _handle_callback(message, message.contact.phone_number, state)
+        return
     await state.update_data(phone=message.contact.phone_number)
     await state.set_state(Order.choosing_payment)
     await message.answer("Выберите форму оплаты:", reply_markup=ReplyKeyboardRemove())
@@ -729,6 +785,10 @@ async def enter_phone_contact(message: Message, state: FSMContext):
 
 @dp.message(Order.entering_phone)
 async def enter_phone_text(message: Message, state: FSMContext):
+    data = await state.get_data()
+    if data.get("order_type") == "callback":
+        await _handle_callback(message, message.text, state)
+        return
     await state.update_data(phone=message.text)
     await state.set_state(Order.choosing_payment)
     await message.answer("Выберите форму оплаты:", reply_markup=ReplyKeyboardRemove())
@@ -797,7 +857,8 @@ async def fallback(message: Message, state: FSMContext):
 # ─── ЗАПУСК ───────────────────────────────────────────────────────────────────
 async def main():
     db_init()
-    print("VTehnike 24 Bot v6.0 запущен!")
+    print("VTehnike 24 Bot v7.0 запущен!")
+    asyncio.create_task(reminder_task())
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
