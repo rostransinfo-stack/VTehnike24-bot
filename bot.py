@@ -365,6 +365,7 @@ class Service(StatesGroup):
     choosing_category = State()
     choosing_service  = State()
     choosing_urgency  = State()
+    choosing_fuel     = State()
     entering_tech     = State()
     entering_location = State()
     entering_phone    = State()
@@ -476,11 +477,11 @@ def kb_urgency():
         [InlineKeyboardButton(text="⬅️ Назад",                 callback_data="start_service")],
     ])
 
-def kb_payment():
+def kb_payment(sec: str = "r"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💵 Наличные",       callback_data="pay_cash")],
-        [InlineKeyboardButton(text="🏦 Безнал с НДС",   callback_data="pay_bank_nds")],
-        [InlineKeyboardButton(text="🏦 Безнал без НДС", callback_data="pay_bank_nonds")],
+        [InlineKeyboardButton(text="💵 Наличные",       callback_data=f"pay_{sec}_cash")],
+        [InlineKeyboardButton(text="🏦 Безнал с НДС",   callback_data=f"pay_{sec}_bank_nds")],
+        [InlineKeyboardButton(text="🏦 Безнал без НДС", callback_data=f"pay_{sec}_bank_nonds")],
     ])
 
 def kb_address():
@@ -498,15 +499,15 @@ def kb_phone():
         resize_keyboard=True, one_time_keyboard=True
     )
 
-def kb_skip():
+def kb_skip(sec: str = "r"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Пропустить ➡️", callback_data="skip_comment")]
+        [InlineKeyboardButton(text="Пропустить ➡️", callback_data=f"skipc_{sec}")]
     ])
 
-def kb_confirm():
+def kb_confirm(sec: str = "r"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Отправить заявку", callback_data="confirm_yes")],
-        [InlineKeyboardButton(text="✏️ Изменить",         callback_data="confirm_no")],
+        [InlineKeyboardButton(text="✅ Отправить заявку", callback_data=f"cfyes_{sec}")],
+        [InlineKeyboardButton(text="✏️ Изменить",         callback_data=f"cfno_{sec}")],
     ])
 
 def kb_rating(order_id: int = 0):
@@ -519,6 +520,20 @@ def kb_rating(order_id: int = 0):
             InlineKeyboardButton(text="⭐ 5", callback_data=f"rev_{order_id}_5"),
         ],
         [InlineKeyboardButton(text="Пропустить", callback_data=f"rev_{order_id}_skip")]
+    ])
+
+
+def kb_fuel():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="100 литров",  callback_data="fuel_100"),
+         InlineKeyboardButton(text="150 литров",  callback_data="fuel_150")],
+        [InlineKeyboardButton(text="200 литров",  callback_data="fuel_200"),
+         InlineKeyboardButton(text="250 литров",  callback_data="fuel_250")],
+        [InlineKeyboardButton(text="300 литров",  callback_data="fuel_300"),
+         InlineKeyboardButton(text="400 литров",  callback_data="fuel_400")],
+        [InlineKeyboardButton(text="500 литров",  callback_data="fuel_500")],
+        [InlineKeyboardButton(text="Другой объём — уточним", callback_data="fuel_own")],
+        [InlineKeyboardButton(text="⬅️ Назад",   callback_data="start_service")],
     ])
 
 def kb_review_comment():
@@ -579,7 +594,9 @@ def service_summary(data: dict) -> str:
         f"Стоимость:   {svc.get('price','-')} ({urg.get('mult','')})",
         f"Срок:        {svc.get('days','-')}",
     ]
-    if data.get("tech"):
+    if data.get("fuel_volume"):
+        lines.append(f"Объём топлива: {data['fuel_volume']}")
+    elif data.get("tech"):
         lines.append(f"Техника:     {data['tech']}")
     lines += [
         f"Оплата:      {get_payment_name(data.get('payment',''))}",
@@ -635,10 +652,10 @@ async def handle_location_input(message: Message, state: FSMContext):
     await message.answer("👇", reply_markup=kb_phone())
     return True
 
-async def handle_phone_input(message: Message, state: FSMContext, phone: str):
+async def handle_phone_input(message: Message, state: FSMContext, phone: str, sec: str = "r"):
     await state.update_data(phone=phone)
     await message.answer("Выберите форму оплаты:", reply_markup=ReplyKeyboardRemove())
-    await message.answer("👇", reply_markup=kb_payment())
+    await message.answer("👇", reply_markup=kb_payment(sec))
 
 async def handle_confirm(cb: CallbackQuery, state: FSMContext, section: str, summary_fn):
     data     = await state.get_data()
@@ -777,31 +794,31 @@ async def rental_phone_text(message: Message, state: FSMContext):
     await handle_phone_input(message, state, message.text)
     await state.set_state(Rental.choosing_payment)
 
-@dp.callback_query(F.data.startswith("pay_"), Rental.choosing_payment)
+@dp.callback_query(F.data.startswith("pay_r_"), Rental.choosing_payment)
 async def rental_payment(cb: CallbackQuery, state: FSMContext):
-    await state.update_data(payment=cb.data.replace("pay_", ""))
+    await state.update_data(payment=cb.data.replace("pay_r_", ""))
     await state.set_state(Rental.entering_comment)
-    await cb.message.answer("Добавьте комментарий или нажмите Пропустить:", reply_markup=kb_skip())
+    await cb.message.answer("Добавьте комментарий или нажмите Пропустить:", reply_markup=kb_skip("r"))
 
-@dp.callback_query(F.data == "skip_comment", Rental.entering_comment)
+@dp.callback_query(F.data == "skipc_r", Rental.entering_comment)
 async def rental_skip_comment(cb: CallbackQuery, state: FSMContext):
     await state.update_data(comment="нет")
     data = await state.get_data()
     await state.set_state(Rental.confirm)
-    await cb.message.answer(rental_summary(data) + "\n\nВсё верно?", reply_markup=kb_confirm())
+    await cb.message.answer(rental_summary(data) + "\n\nВсё верно?", reply_markup=kb_confirm("r"))
 
 @dp.message(Rental.entering_comment)
 async def rental_comment(message: Message, state: FSMContext):
     await state.update_data(comment=message.text)
     data = await state.get_data()
     await state.set_state(Rental.confirm)
-    await message.answer(rental_summary(data) + "\n\nВсё верно?", reply_markup=kb_confirm())
+    await message.answer(rental_summary(data) + "\n\nВсё верно?", reply_markup=kb_confirm("r"))
 
-@dp.callback_query(F.data == "confirm_yes", Rental.confirm)
+@dp.callback_query(F.data == "cfyes_r", Rental.confirm)
 async def rental_confirm(cb: CallbackQuery, state: FSMContext):
     await handle_confirm(cb, state, "rental", rental_summary)
 
-@dp.callback_query(F.data == "confirm_no", Rental.confirm)
+@dp.callback_query(F.data == "cfno_r", Rental.confirm)
 async def rental_cancel(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await cb.message.answer("Начнём заново:", reply_markup=kb_main())
@@ -843,39 +860,39 @@ async def works_location(message: Message, state: FSMContext):
 
 @dp.message(Works.entering_phone, F.contact)
 async def works_phone_contact(message: Message, state: FSMContext):
-    await handle_phone_input(message, state, message.contact.phone_number)
+    await handle_phone_input(message, state, message.contact.phone_number, "w")
     await state.set_state(Works.choosing_payment)
 
 @dp.message(Works.entering_phone)
 async def works_phone_text(message: Message, state: FSMContext):
-    await handle_phone_input(message, state, message.text)
+    await handle_phone_input(message, state, message.text, "w")
     await state.set_state(Works.choosing_payment)
 
-@dp.callback_query(F.data.startswith("pay_"), Works.choosing_payment)
+@dp.callback_query(F.data.startswith("pay_w_"), Works.choosing_payment)
 async def works_payment(cb: CallbackQuery, state: FSMContext):
-    await state.update_data(payment=cb.data.replace("pay_", ""))
+    await state.update_data(payment=cb.data.replace("pay_w_", ""))
     await state.set_state(Works.entering_comment)
-    await cb.message.answer("Добавьте комментарий или нажмите Пропустить:", reply_markup=kb_skip())
+    await cb.message.answer("Добавьте комментарий или нажмите Пропустить:", reply_markup=kb_skip("w"))
 
-@dp.callback_query(F.data == "skip_comment", Works.entering_comment)
+@dp.callback_query(F.data == "skipc_w", Works.entering_comment)
 async def works_skip_comment(cb: CallbackQuery, state: FSMContext):
     await state.update_data(comment="нет")
     data = await state.get_data()
     await state.set_state(Works.confirm)
-    await cb.message.answer(works_summary(data) + "\n\nВсё верно?", reply_markup=kb_confirm())
+    await cb.message.answer(works_summary(data) + "\n\nВсё верно?", reply_markup=kb_confirm("w"))
 
 @dp.message(Works.entering_comment)
 async def works_comment(message: Message, state: FSMContext):
     await state.update_data(comment=message.text)
     data = await state.get_data()
     await state.set_state(Works.confirm)
-    await message.answer(works_summary(data) + "\n\nВсё верно?", reply_markup=kb_confirm())
+    await message.answer(works_summary(data) + "\n\nВсё верно?", reply_markup=kb_confirm("w"))
 
-@dp.callback_query(F.data == "confirm_yes", Works.confirm)
+@dp.callback_query(F.data == "cfyes_w", Works.confirm)
 async def works_confirm(cb: CallbackQuery, state: FSMContext):
     await handle_confirm(cb, state, "works", works_summary)
 
-@dp.callback_query(F.data == "confirm_no", Works.confirm)
+@dp.callback_query(F.data == "cfno_w", Works.confirm)
 async def works_cancel(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await cb.message.answer("Начнём заново:", reply_markup=kb_main())
@@ -915,12 +932,34 @@ async def choose_service_service(cb: CallbackQuery, state: FSMContext):
 async def choose_service_urgency(cb: CallbackQuery, state: FSMContext):
     key = cb.data.replace("urg_", "")
     await state.update_data(urgency=key)
+    data = await state.get_data()
+    # Если заправка топливом — спрашиваем объём
+    if data.get("service_key") == "fuel":
+        await state.set_state(Service.choosing_fuel)
+        await cb.message.answer(
+            f"Срочность: {SERVICE_URGENCY[key]['name']}\n\nВыберите объём топлива:",
+            reply_markup=kb_fuel()
+        )
+        return
     await state.set_state(Service.entering_tech)
     await cb.message.answer(
         f"Срочность: {SERVICE_URGENCY[key]['name']}\n\n"
         "Укажите тип и марку техники:\nНапример: Экскаватор Komatsu PC200\n\n"
         "(или напишите «нет» если неизвестно)"
     )
+
+
+@dp.callback_query(F.data.startswith("fuel_"), Service.choosing_fuel)
+async def choose_fuel_volume(cb: CallbackQuery, state: FSMContext):
+    code = cb.data.replace("fuel_", "")
+    volume = "уточним по телефону" if code == "own" else f"{code} литров"
+    await state.update_data(fuel_volume=volume, tech=f"Объём: {volume}")
+    await state.set_state(Service.entering_location)
+    await cb.message.answer(
+        f"Объём топлива: {volume}\n\nУкажите адрес объекта:",
+        reply_markup=kb_address()
+    )
+    await cb.answer()
 
 @dp.message(Service.entering_tech)
 async def service_enter_tech(message: Message, state: FSMContext):
@@ -940,7 +979,7 @@ async def service_phone_contact(message: Message, state: FSMContext):
     if data.get("order_type") == "callback":
         await _handle_callback(message, message.contact.phone_number, state)
         return
-    await handle_phone_input(message, state, message.contact.phone_number)
+    await handle_phone_input(message, state, message.contact.phone_number, "s")
     await state.set_state(Service.choosing_payment)
 
 @dp.message(Service.entering_phone)
@@ -949,34 +988,34 @@ async def service_phone_text(message: Message, state: FSMContext):
     if data.get("order_type") == "callback":
         await _handle_callback(message, message.text, state)
         return
-    await handle_phone_input(message, state, message.text)
+    await handle_phone_input(message, state, message.text, "s")
     await state.set_state(Service.choosing_payment)
 
-@dp.callback_query(F.data.startswith("pay_"), Service.choosing_payment)
+@dp.callback_query(F.data.startswith("pay_s_"), Service.choosing_payment)
 async def service_payment(cb: CallbackQuery, state: FSMContext):
-    await state.update_data(payment=cb.data.replace("pay_", ""))
+    await state.update_data(payment=cb.data.replace("pay_s_", ""))
     await state.set_state(Service.entering_comment)
-    await cb.message.answer("Добавьте комментарий или нажмите Пропустить:", reply_markup=kb_skip())
+    await cb.message.answer("Добавьте комментарий или нажмите Пропустить:", reply_markup=kb_skip("s"))
 
-@dp.callback_query(F.data == "skip_comment", Service.entering_comment)
+@dp.callback_query(F.data == "skipc_s", Service.entering_comment)
 async def service_skip_comment(cb: CallbackQuery, state: FSMContext):
     await state.update_data(comment="нет")
     data = await state.get_data()
     await state.set_state(Service.confirm)
-    await cb.message.answer(service_summary(data) + "\n\nВсё верно?", reply_markup=kb_confirm())
+    await cb.message.answer(service_summary(data) + "\n\nВсё верно?", reply_markup=kb_confirm("s"))
 
 @dp.message(Service.entering_comment)
 async def service_comment(message: Message, state: FSMContext):
     await state.update_data(comment=message.text)
     data = await state.get_data()
     await state.set_state(Service.confirm)
-    await message.answer(service_summary(data) + "\n\nВсё верно?", reply_markup=kb_confirm())
+    await message.answer(service_summary(data) + "\n\nВсё верно?", reply_markup=kb_confirm("s"))
 
-@dp.callback_query(F.data == "confirm_yes", Service.confirm)
+@dp.callback_query(F.data == "cfyes_s", Service.confirm)
 async def service_confirm(cb: CallbackQuery, state: FSMContext):
     await handle_confirm(cb, state, "service", service_summary)
 
-@dp.callback_query(F.data == "confirm_no", Service.confirm)
+@dp.callback_query(F.data == "cfno_s", Service.confirm)
 async def service_cancel(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await cb.message.answer("Начнём заново:", reply_markup=kb_main())
