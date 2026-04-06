@@ -72,6 +72,17 @@ def db_init():
         """)
         con.commit()
 
+        # Миграция: добавить колонки если их нет (для старых баз данных)
+        for migration in [
+            "ALTER TABLE orders ADD COLUMN section TEXT DEFAULT 'rental'",
+            "ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'rental'",
+        ]:
+            try:
+                con.execute(migration)
+                con.commit()
+            except Exception:
+                pass  # колонка уже существует
+
 def db_track_user(user) -> bool:
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
     with db_connect() as con:
