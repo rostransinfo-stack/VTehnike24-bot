@@ -1,5 +1,5 @@
 """
-VTehnike 24 — Telegram Bot v16.0
+VTehnike 24 — Telegram Bot v17.0
 Три направления:
   🚜 Аренда техники
   🏗️ Демонтаж, земляные работы и благоустройство
@@ -20,7 +20,7 @@ VTehnike 24 — Telegram Bot v16.0
 import asyncio
 import logging
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
     Message, CallbackQuery,
@@ -33,7 +33,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import CommandStart, Command
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────────────────────
-BOT_TOKEN = "7151969834:AAHLEnwxwfpaaERnJaOYiiA6ctXJoxvR4C8"
+BOT_TOKEN = "151969834:AAHLEnwxwfpaaERnJaOYiiA6ctXJoxvR4C8"
 OWNER_ID   = 125380747
 DB_FILE    = "/data/vtehnike.db"
 PHONE      = "+7 (992) 350-80-08"
@@ -45,7 +45,7 @@ dp  = Dispatcher(storage=MemoryStorage())
 
 # ─── БАЗА ДАННЫХ ──────────────────────────────────────────────────────────────
 def db_connect():
-    return sqlite3.connect(DB_FILE)
+    return sqlite3.connect(DB_FILE, check_same_thread=False)
 
 def db_init():
     with db_connect() as con:
@@ -96,8 +96,8 @@ def db_init():
             except Exception:
                 pass  # колонка уже существует
 
-def db_track_user(user) -> bool:
-    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+def db_track_user(user, ref: str = "") -> bool:
+    now = now_msk().strftime("%d.%m.%Y %H:%M")
     with db_connect() as con:
         existing = con.execute("SELECT id FROM users WHERE id=?", (user.id,)).fetchone()
         if not existing:
@@ -105,6 +105,12 @@ def db_track_user(user) -> bool:
                 "INSERT INTO users (id, name, username, first_seen, last_seen, visits) VALUES (?,?,?,?,?,1)",
                 (user.id, user.full_name, user.username or "", now, now)
             )
+            if ref:
+                try:
+                    con.execute("ALTER TABLE users ADD COLUMN ref TEXT")
+                except Exception:
+                    pass
+                con.execute("UPDATE users SET ref=? WHERE id=?", (ref, user.id))
             con.commit()
             return True
         con.execute(
@@ -115,7 +121,7 @@ def db_track_user(user) -> bool:
         return False
 
 def db_add_order(user_id: int, section: str, order_type: str, summary: str) -> int:
-    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    now = now_msk().strftime("%d.%m.%Y %H:%M")
     with db_connect() as con:
         cur = con.execute(
             "INSERT INTO orders (user_id, section, order_type, summary, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
@@ -125,7 +131,7 @@ def db_add_order(user_id: int, section: str, order_type: str, summary: str) -> i
         return cur.lastrowid
 
 def db_update_status(order_id: int, status: str):
-    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    now = now_msk().strftime("%d.%m.%Y %H:%M")
     with db_connect() as con:
         con.execute("UPDATE orders SET status=?, updated_at=? WHERE id=?", (status, now, order_id))
         con.commit()
@@ -135,7 +141,7 @@ def db_get_order(order_id: int):
         return con.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
 
 def db_add_review(user_id: int, order_id: int, rating: int, comment: str):
-    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    now = now_msk().strftime("%d.%m.%Y %H:%M")
     with db_connect() as con:
         con.execute(
             "INSERT INTO reviews (user_id, order_id, rating, comment, created_at) VALUES (?,?,?,?,?)",
@@ -171,7 +177,7 @@ def db_get_pending_orders(minutes: int = 120) -> list:
             "SELECT id, user_id, section, created_at FROM orders WHERE status='принята' AND reminded_at IS NULL"
         ).fetchall()
     result = []
-    now = datetime.now()
+    now = datetime.now()  # naive — для сравнения со значениями из БД (тоже naive)
     for row in rows:
         try:
             created = datetime.strptime(row[3], "%d.%m.%Y %H:%M")
@@ -183,7 +189,7 @@ def db_get_pending_orders(minutes: int = 120) -> list:
 
 def db_mark_reminded(order_id: int):
     """Отмечает что напоминание по заявке уже отправлено."""
-    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    now = now_msk().strftime("%d.%m.%Y %H:%M")
     with db_connect() as con:
         con.execute("UPDATE orders SET reminded_at=? WHERE id=?", (now, order_id))
         con.commit()
@@ -224,7 +230,7 @@ def db_get_stats() -> str:
 
 def db_get_weekly_stats() -> str:
     with db_connect() as con:
-        week_ago    = (datetime.now() - timedelta(days=7)).strftime("%d.%m.%Y")
+        week_ago    = (now_msk() - timedelta(days=7)).strftime("%d.%m.%Y")
         new_users   = con.execute("SELECT COUNT(*) FROM users WHERE first_seen >= ?", (week_ago,)).fetchone()[0]
         new_orders  = con.execute("SELECT COUNT(*) FROM orders WHERE created_at >= ?", (week_ago,)).fetchone()[0]
         rental_cnt  = con.execute("SELECT COUNT(*) FROM orders WHERE section='rental' AND created_at >= ?", (week_ago,)).fetchone()[0]
@@ -235,7 +241,7 @@ def db_get_weekly_stats() -> str:
         avg_rating  = con.execute("SELECT AVG(rating) FROM reviews WHERE created_at >= ?", (week_ago,)).fetchone()[0]
     rating_str = f"{avg_rating:.1f}/5" if avg_rating else "нет"
     return (
-        f"Сводка за 7 дней\n{datetime.now().strftime('%d.%m.%Y')}\n\n"
+        f"Сводка за 7 дней\n{now_msk().strftime('%d.%m.%Y')}\n\n"
         f"Новых пользователей: {new_users}\n"
         f"Новых заявок:        {new_orders}\n"
         f"  аренда:            {rental_cnt}\n"
@@ -247,9 +253,15 @@ def db_get_weekly_stats() -> str:
     )
 
 # ─── ДАННЫЕ ───────────────────────────────────────────────────────────────────
+MSK = timezone(timedelta(hours=3))
+
+def now_msk() -> datetime:
+    """Текущее время по Москве."""
+    return datetime.now(tz=MSK)
+
 def is_working_hours() -> bool:
-    now = datetime.now()
-    if now.weekday() == 6:
+    now = now_msk()
+    if now.weekday() == 6:  # воскресенье
         return False
     return 8 <= now.hour < 20
 
@@ -413,7 +425,6 @@ class Service(StatesGroup):
 
 
 class Trade(StatesGroup):
-    choosing_action   = State()
     # Покупка
     entering_tech     = State()
     entering_budget   = State()
@@ -425,7 +436,6 @@ class Trade(StatesGroup):
     sell_condition    = State()
     sell_price        = State()
     sell_photo        = State()   # фото техники (обязательно для срочного выкупа)
-    sell_phone        = State()
     sell_confirm      = State()
 
 class OwnerReply(StatesGroup):
@@ -441,6 +451,7 @@ def kb_main():
         [InlineKeyboardButton(text="🏗 Демонтаж, земляные работы, благ.", callback_data="start_works")],
         [InlineKeyboardButton(text="🔧 VTehnike 24 Service",              callback_data="start_service")],
         [InlineKeyboardButton(text="💰 Купить / Продать технику",         callback_data="start_trade")],
+        [InlineKeyboardButton(text="📄 Прайс и услуги",                   callback_data="show_price")],
         [InlineKeyboardButton(text="📋 Мои заявки",                       callback_data="my_orders")],
         [InlineKeyboardButton(text="📞 Перезвоните мне",                  callback_data="callback_request")],
         [InlineKeyboardButton(text="☎️ Позвонить нам",                    callback_data="call_us")],
@@ -666,26 +677,31 @@ async def notify_owner(section: str, summary: str, user, order_id: int, data: di
     labels = {"rental": "АРЕНДА", "works": "РАБОТЫ", "service": "СЕРВИС"}
     label  = labels.get(section, section.upper())
     tag    = f"@{user.username}" if user.username else f"ID: {user.id}"
-    phone  = (data or {}).get("phone", "")
-    phone_clean = phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "") if phone else ""
-    buttons = [
+    kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="▶️ В работу",         callback_data=f"ss_{order_id}_{user.id}_inwork")],
         [InlineKeyboardButton(text="✅ Выполнено",         callback_data=f"ss_{order_id}_{user.id}_done")],
         [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_{order_id}_{user.id}")],
         [InlineKeyboardButton(text="❌ Отменить",          callback_data=f"ss_{order_id}_{user.id}_cancel")],
-    ]
-    if phone_clean:
-        buttons.insert(0, [InlineKeyboardButton(text="📞 Позвонить клиенту", url=f"tel:{phone_clean}")])
-    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await bot.send_message(
-        OWNER_ID,
+    ])
+    text = (
         f"НОВАЯ ЗАЯВКА #{order_id} — {label}\n"
-        f"{datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
-        f"Клиент: {user.full_name} ({tag})\n\n{summary}",
-        reply_markup=kb
+        f"{now_msk().strftime('%d.%m.%Y %H:%M')}\n"
+        f"Клиент: {user.full_name} ({tag})\n\n{summary}"
     )
+    try:
+        await bot.send_message(OWNER_ID, text, reply_markup=kb)
+    except Exception as e:
+        logging.error(f"notify_owner send error: {e}")
+        # Fallback — без клавиатуры
+        try:
+            await bot.send_message(OWNER_ID, text)
+        except Exception as e2:
+            logging.error(f"notify_owner fallback error: {e2}")
     if data and data.get("lat") and data.get("lon"):
-        await bot.send_location(OWNER_ID, latitude=data["lat"], longitude=data["lon"])
+        try:
+            await bot.send_location(OWNER_ID, latitude=data["lat"], longitude=data["lon"])
+        except Exception:
+            pass
 
 # ─── ОБЩИЙ СБОР ДАННЫХ (адрес, телефон, оплата, комментарий) ─────────────────
 async def ask_location(target, state: FSMContext):
@@ -739,27 +755,49 @@ async def handle_confirm(cb: CallbackQuery, state: FSMContext, section: str, sum
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    db_track_user(message.from_user)
-    name = message.from_user.first_name or "Добро пожаловать"
-    off  = ""
+    # Извлекаем UTM/реферальный параметр: /start ref_yandex → ref="ref_yandex"
+    args = message.text.split(maxsplit=1)
+    ref  = args[1].strip() if len(args) > 1 else ""
+    is_new = db_track_user(message.from_user, ref=ref)
+    name = message.from_user.first_name or "друг"
+    # Разное приветствие для нового и вернувшегося клиента
+    if is_new:
+        greeting = f"Привет, {name}! Добро пожаловать в VTehnike 24! 👋"
+    else:
+        greeting = f"С возвращением, {name}! Рады видеть вас снова. 👋"
+    # Уведомление о нерабочих часах
+    off = ""
     if not is_working_hours():
-        off = "\n\nРаботаем Пн-Сб 8:00-20:00. Заявку можно оставить сейчас — ответим утром первым делом.\nЭкстренный выезд: " + PHONE
+        off = f"\n\nРаботаем Пн-Сб 8:00-20:00. Заявку можно оставить сейчас — ответим утром первым делом.\nЭкстренный выезд: {PHONE}"
     await message.answer(
-        f"Привет, {name}! Добро пожаловать в VTehnike 24!\n\n"
+        f"{greeting}\n\n"
         f"Аренда спецтехники, демонтаж, земляные работы, благоустройство и сервис — "
         f"работаем по всей Московской области.{off}\n\n"
         f"Чем могу помочь?",
         reply_markup=kb_main()
     )
+    # Уведомляем владельца о новом клиенте
+    if is_new:
+        tag = f"@{message.from_user.username}" if message.from_user.username else f"ID: {message.from_user.id}"
+        ref_info = f"\nИсточник: {ref}" if ref else ""
+        try:
+            await bot.send_message(
+                OWNER_ID,
+                f"🆕 Новый клиент!\n{message.from_user.full_name} ({tag}){ref_info}"
+            )
+        except Exception:
+            pass
 
 # ─── ГЛАВНОЕ МЕНЮ ─────────────────────────────────────────────────────────────
 @dp.callback_query(F.data == "back_main")
 async def back_main(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.clear()
     await cb.message.answer("Главное меню:", reply_markup=kb_main())
 
 @dp.callback_query(F.data == "call_us")
 async def call_us(cb: CallbackQuery):
+    await cb.answer()
     await cb.message.answer(
         f"Позвоните нам:\n\n{PHONE}\n\nПн-Сб 8:00-20:00\nЭкстренные выезды — круглосуточно",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -768,14 +806,52 @@ async def call_us(cb: CallbackQuery):
         ])
     )
 
+@dp.callback_query(F.data == "show_price")
+async def show_price(cb: CallbackQuery):
+    await cb.answer()
+    text = (
+        "📄 Прайс VTehnike 24\n\n"
+        "🚜 АРЕНДА ТЕХНИКИ (смена = 8 часов)\n"
+        "Мини-экскаватор (до 6т)       от 14 400 руб./смена\n"
+        "Экскаватор средний (6–20т)    от 20 000 руб./смена\n"
+        "Экскаватор тяжёлый (20т+)     от 28 000 руб./смена\n"
+        "Экскаватор-погрузчик (JCB)    от 17 600 руб./смена\n"
+        "Погрузчик фронтальный         от 16 000 руб./смена\n"
+        "Мини-погрузчик (Bobcat)       от 14 400 руб./смена\n"
+        "Бульдозер                     от 24 000 руб./смена\n"
+        "Автогрейдер                   от 25 600 руб./смена\n"
+        "Автокран (25–50т)             от 28 000 руб./смена\n"
+        "Самосвал (10–20т)             от 12 000 руб./смена\n"
+        "Манипулятор                   от 16 000 руб./смена\n"
+        "Каток дорожный                от 20 000 руб./смена\n\n"
+        "🔧 СЕРВИС И РЕМОНТ\n"
+        "Диагностика (выезд)           5 000 руб.\n"
+        "Ремонт ковша (базовый)        от 15 000 руб.\n"
+        "Hardox-бронирование           от 40 000 руб.\n"
+        "Замена зубьев (комплект)      от 12 000 руб.\n"
+        "Ремонт гидравлики             от 25 000 руб.\n"
+        "Плановое ТО                   от 10 000 руб.\n"
+        "Тех. дежурство                от 8 000 руб./смена\n\n"
+        "🏗 РАБОТЫ — цена по объёму и площади.\n"
+        "Уточните детали — рассчитаем за 15 минут.\n\n"
+        f"📞 {PHONE}"
+    )
+    await cb.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚜 Арендовать технику",  callback_data="start_rental")],
+        [InlineKeyboardButton(text="🔧 Записаться на сервис", callback_data="start_service")],
+        [InlineKeyboardButton(text="⬅️ Главное меню",         callback_data="back_main")],
+    ]))
+
 @dp.callback_query(F.data == "callback_request")
 async def callback_request(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.clear()
     await state.update_data(order_type="callback")
     await cb.message.answer("Оставьте номер — перезвоним в течение 15 минут:", reply_markup=kb_phone())
 
 @dp.callback_query(F.data == "my_orders")
 async def my_orders(cb: CallbackQuery):
+    await cb.answer()
     rows = db_get_client_orders(cb.from_user.id)
     if not rows:
         await cb.message.answer(
@@ -785,20 +861,27 @@ async def my_orders(cb: CallbackQuery):
         return
     emoji_map = {"принята": "🆕", "в работе": "🔧", "выполнено": "✅", "отменена": "❌"}
     section_map = {"rental": "Аренда", "works": "Работы", "service": "Сервис", "trade": "Купля-продажа", "callback": "Звонок"}
+    section_cb  = {"rental": "start_rental", "works": "start_works", "service": "start_service", "trade": "start_trade"}
     text = "Ваши заявки:\n\n"
     for row in rows:
         order_id, section, order_type, status, created_at = row
         emoji  = emoji_map.get(status, "📋")
         label  = section_map.get(section, section)
         text  += f"{emoji} #{order_id} — {label}\n   Статус: {status}\n   Дата: {created_at}\n\n"
-    await cb.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_main")]
-    ]))
-    await cb.answer()
+    # Кнопка «Повторить» — берём раздел последней заявки
+    last_section = rows[0][1] if rows else None
+    repeat_cb    = section_cb.get(last_section)
+    buttons = []
+    if repeat_cb:
+        last_label = section_map.get(last_section, "заявку")
+        buttons.append([InlineKeyboardButton(text=f"🔁 Повторить ({last_label})", callback_data=repeat_cb)])
+    buttons.append([InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_main")])
+    await cb.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 # ─── АРЕНДА ───────────────────────────────────────────────────────────────────
 @dp.callback_query(F.data == "start_rental")
 async def start_rental(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.clear()
     await state.update_data(section="rental", order_type="rental")
     await state.set_state(Rental.choosing_tech)
@@ -806,6 +889,7 @@ async def start_rental(cb: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("rnt_"), Rental.choosing_tech)
 async def choose_rental_tech(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     key  = cb.data.replace("rnt_", "")
     tech = RENTAL_TECH[key]
     await state.update_data(rental_tech=key)
@@ -819,6 +903,7 @@ async def choose_rental_tech(cb: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("rwt_"), Rental.choosing_worktype)
 async def choose_rental_worktype(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     parts    = cb.data.split("_")
     idx      = int(parts[-1])
     tech_key = "_".join(parts[1:-1])
@@ -833,6 +918,7 @@ async def choose_rental_worktype(cb: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("shf_"), Rental.choosing_shifts)
 async def choose_shifts(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     key   = cb.data.replace("shf_", "")
     shift = SHIFTS[key]
     data  = await state.get_data()
@@ -861,12 +947,14 @@ async def rental_phone_text(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("pay_r_"), Rental.choosing_payment)
 async def rental_payment(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.update_data(payment=cb.data.replace("pay_r_", ""))
     await state.set_state(Rental.entering_comment)
     await cb.message.answer("Добавьте комментарий или нажмите Пропустить:", reply_markup=kb_skip("r"))
 
 @dp.callback_query(F.data == "skipc_r", Rental.entering_comment)
 async def rental_skip_comment(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.update_data(comment="нет")
     data = await state.get_data()
     await state.set_state(Rental.confirm)
@@ -881,16 +969,19 @@ async def rental_comment(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "cfyes_r", Rental.confirm)
 async def rental_confirm(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await handle_confirm(cb, state, "rental", rental_summary)
 
 @dp.callback_query(F.data == "cfno_r", Rental.confirm)
 async def rental_cancel(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.clear()
     await cb.message.answer("Начнём заново:", reply_markup=kb_main())
 
 # ─── ДЕМОНТАЖ, ЗЕМЛЯНЫЕ РАБОТЫ И БЛАГОУСТРОЙСТВО ─────────────────────────────
 @dp.callback_query(F.data == "start_works")
 async def start_works(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.clear()
     await state.update_data(section="works", order_type="works")
     await state.set_state(Works.choosing_category)
@@ -898,6 +989,7 @@ async def start_works(cb: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("wcat_"), Works.choosing_category)
 async def choose_works_category(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     cat = cb.data.replace("wcat_", "")
     await state.update_data(works_category=cat)
     await state.set_state(Works.choosing_service)
@@ -906,6 +998,7 @@ async def choose_works_category(cb: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("wsvc_"), Works.choosing_service)
 async def choose_works_service(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     svc_key  = cb.data.replace("wsvc_", "")
     data     = await state.get_data()
     cat_key  = data.get("works_category", "")
@@ -935,12 +1028,14 @@ async def works_phone_text(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("pay_w_"), Works.choosing_payment)
 async def works_payment(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.update_data(payment=cb.data.replace("pay_w_", ""))
     await state.set_state(Works.entering_comment)
     await cb.message.answer("Добавьте комментарий или нажмите Пропустить:", reply_markup=kb_skip("w"))
 
 @dp.callback_query(F.data == "skipc_w", Works.entering_comment)
 async def works_skip_comment(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.update_data(comment="нет")
     data = await state.get_data()
     await state.set_state(Works.confirm)
@@ -955,16 +1050,19 @@ async def works_comment(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "cfyes_w", Works.confirm)
 async def works_confirm(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await handle_confirm(cb, state, "works", works_summary)
 
 @dp.callback_query(F.data == "cfno_w", Works.confirm)
 async def works_cancel(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.clear()
     await cb.message.answer("Начнём заново:", reply_markup=kb_main())
 
 # ─── СЕРВИС И РЕМОНТ ──────────────────────────────────────────────────────────
 @dp.callback_query(F.data == "start_service")
 async def start_service(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.clear()
     await state.update_data(section="service", order_type="service")
     await state.set_state(Service.choosing_category)
@@ -972,6 +1070,7 @@ async def start_service(cb: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("scat_"), Service.choosing_category)
 async def choose_service_category(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     cat = cb.data.replace("scat_", "")
     await state.update_data(service_category=cat)
     await state.set_state(Service.choosing_service)
@@ -980,6 +1079,7 @@ async def choose_service_category(cb: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("ssvc_"), Service.choosing_service)
 async def choose_service_service(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     svc_key = cb.data.replace("ssvc_", "")
     data    = await state.get_data()
     cat_key = data.get("service_category", "")
@@ -995,6 +1095,7 @@ async def choose_service_service(cb: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("urg_"), Service.choosing_urgency)
 async def choose_service_urgency(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     key = cb.data.replace("urg_", "")
     await state.update_data(urgency=key)
     data = await state.get_data()
@@ -1058,12 +1159,14 @@ async def service_phone_text(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("pay_s_"), Service.choosing_payment)
 async def service_payment(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.update_data(payment=cb.data.replace("pay_s_", ""))
     await state.set_state(Service.entering_comment)
     await cb.message.answer("Добавьте комментарий или нажмите Пропустить:", reply_markup=kb_skip("s"))
 
 @dp.callback_query(F.data == "skipc_s", Service.entering_comment)
 async def service_skip_comment(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.update_data(comment="нет")
     data = await state.get_data()
     await state.set_state(Service.confirm)
@@ -1078,10 +1181,12 @@ async def service_comment(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "cfyes_s", Service.confirm)
 async def service_confirm(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await handle_confirm(cb, state, "service", service_summary)
 
 @dp.callback_query(F.data == "cfno_s", Service.confirm)
 async def service_cancel(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.clear()
     await cb.message.answer("Начнём заново:", reply_markup=kb_main())
 
@@ -1091,20 +1196,23 @@ async def _handle_callback(message: Message, phone: str, state: FSMContext):
     db_track_user(user)
     await state.clear()
     tag = f"@{user.username}" if user.username else f"ID: {user.id}"
-    phone_clean = phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
-    cb_buttons = [
+    kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_0_{user.id}")],
-    ]
-    if phone_clean:
-        cb_buttons.insert(0, [InlineKeyboardButton(text="📞 Позвонить клиенту", url=f"tel:{phone_clean}")])
-    await bot.send_message(
-        OWNER_ID,
+    ])
+    text = (
         f"📞 ПЕРЕЗВОНИТЬ!\n\n"
         f"Клиент: {user.full_name} ({tag})\n"
         f"Телефон: {phone}\n"
-        f"{datetime.now().strftime('%d.%m.%Y %H:%M')}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=cb_buttons)
+        f"{now_msk().strftime('%d.%m.%Y %H:%M')}"
     )
+    try:
+        await bot.send_message(OWNER_ID, text, reply_markup=kb)
+    except Exception as e:
+        logging.error(f"Callback notify error: {e}")
+        try:
+            await bot.send_message(OWNER_ID, text)
+        except Exception as e2:
+            logging.error(f"Callback notify fallback error: {e2}")
     await message.answer("Перезвоним в течение 15 минут!", reply_markup=ReplyKeyboardRemove())
     await message.answer("Главное меню:", reply_markup=kb_main())
 
@@ -1179,6 +1287,38 @@ async def cmd_set_status(message: Message):
         return
     await _apply_status(message, order_id, status)
 
+@dp.message(Command("done"))
+async def cmd_done(message: Message):
+    """Массовое закрытие заявок: /done 5 7 12"""
+    if message.from_user.id != OWNER_ID:
+        return
+    parts = message.text.split()[1:]
+    if not parts:
+        await message.answer("Формат: /done [номер] [номер] ...\nПример: /done 5 7 12")
+        return
+    results = []
+    for p in parts:
+        if not p.isdigit():
+            results.append(f"#{p} — не число, пропущено")
+            continue
+        order_id = int(p)
+        order = db_get_order(order_id)
+        if not order:
+            results.append(f"#{order_id} — не найдена")
+            continue
+        db_update_status(order_id, "выполнено")
+        client_id = order[1]
+        try:
+            await bot.send_message(
+                client_id,
+                f"📋 Заявка #{order_id}\n\nСтатус: {ORDER_STATUSES['выполнено']}\n\nЗвоните: {PHONE}"
+            )
+            await bot.send_message(client_id, "Оцените нашу работу:", reply_markup=kb_rating(order_id))
+        except Exception:
+            pass
+        results.append(f"#{order_id} — ✅ выполнено")
+    await message.answer("Результат:\n" + "\n".join(results))
+
 @dp.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
     if message.from_user.id != OWNER_ID:
@@ -1209,9 +1349,11 @@ async def cmd_help(message: Message):
             "/stats — статистика\n"
             "/week — сводка за 7 дней\n"
             "/status [№] [статус] — сменить статус\n"
+            "/done [№] [№] ... — закрыть несколько заявок\n"
             "/broadcast [текст] — рассылка всем\n\n"
             "Статусы: принята, в работе, выполнено, отменена\n\n"
-            "Ответ клиенту: поддерживает текст, фото, документы."
+            "Ответ клиенту: поддерживает текст, фото, документы.\n\n"
+            "UTM-ссылки: t.me/БОТ?start=ref_yandex"
         )
     else:
         await message.answer(
@@ -1462,6 +1604,7 @@ def kb_trade_confirm_sell():
 
 @dp.callback_query(F.data == "start_trade")
 async def start_trade(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.clear()
     await cb.message.answer(
         "💰 Покупка и продажа спецтехники\n\n"
@@ -1474,6 +1617,7 @@ async def start_trade(cb: CallbackQuery, state: FSMContext):
 # ─── ПОКУПКА ──────────────────────────────────────────────────────────────────
 @dp.callback_query(F.data == "trade_buy")
 async def trade_buy_start(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.clear()
     await state.update_data(trade_action="buy")
     await state.set_state(Trade.entering_tech)
@@ -1557,23 +1701,23 @@ async def trade_buy_finish(cb: CallbackQuery, state: FSMContext):
     )
     order_id = db_add_order(cb.from_user.id, "trade", "buy", summary)
     tag = f"@{cb.from_user.username}" if cb.from_user.username else f"ID: {cb.from_user.id}"
-    phone_clean = data.get('phone', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
-    trade_buttons = [
+    kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_{order_id}_{cb.from_user.id}")],
         [InlineKeyboardButton(text="▶️ В работу", callback_data=f"ss_{order_id}_{cb.from_user.id}_inwork")],
-    ]
-    if phone_clean:
-        trade_buttons.insert(0, [InlineKeyboardButton(text="📞 Позвонить клиенту", url=f"tel:{phone_clean}")])
+    ])
+    text = (
+        f"🟢 НОВАЯ ЗАЯВКА #{order_id} — ПОКУПКА ТЕХНИКИ\n"
+        f"{now_msk().strftime('%d.%m.%Y %H:%M')}\n"
+        f"Клиент: {cb.from_user.full_name} ({tag})\n\n{summary}"
+    )
     try:
-        await bot.send_message(
-            OWNER_ID,
-            f"🟢 НОВАЯ ЗАЯВКА #{order_id} — ПОКУПКА ТЕХНИКИ\n"
-            f"{datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
-            f"Клиент: {cb.from_user.full_name} ({tag})\n\n{summary}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=trade_buttons)
-        )
+        await bot.send_message(OWNER_ID, text, reply_markup=kb)
     except Exception as e:
         logging.error(f"Trade buy notify error (order #{order_id}): {e}")
+        try:
+            await bot.send_message(OWNER_ID, text)
+        except Exception as e2:
+            logging.error(f"Trade buy notify fallback error: {e2}")
     await cb.message.answer(
         f"Заявка #{order_id} принята!\n\n"
         "Подберём варианты и свяжемся в течение 15 минут.\n\n"
@@ -1585,6 +1729,7 @@ async def trade_buy_finish(cb: CallbackQuery, state: FSMContext):
 # ─── ПРОДАЖА ──────────────────────────────────────────────────────────────────
 @dp.callback_query(F.data == "trade_sell")
 async def trade_sell_start(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.clear()
     await state.update_data(trade_action="sell")
     await state.set_state(Trade.sell_tech)
@@ -1718,29 +1863,32 @@ async def trade_sell_finish(cb: CallbackQuery, state: FSMContext):
     order_id = db_add_order(cb.from_user.id, "trade", "urgent" if urgent else "sell", summary)
     tag = f"@{cb.from_user.username}" if cb.from_user.username else f"ID: {cb.from_user.id}"
     emoji = "⚡" if urgent else "🔴"
-    phone_clean = data.get('phone', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
-    sell_buttons = [
+    kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_{order_id}_{cb.from_user.id}")],
         [InlineKeyboardButton(text="▶️ В работу", callback_data=f"ss_{order_id}_{cb.from_user.id}_inwork")],
-    ]
-    if phone_clean:
-        sell_buttons.insert(0, [InlineKeyboardButton(text="📞 Позвонить клиенту", url=f"tel:{phone_clean}")])
+    ])
+    text = (
+        f"{emoji} НОВАЯ ЗАЯВКА #{order_id} — {prefix}\n"
+        f"{now_msk().strftime('%d.%m.%Y %H:%M')}\n"
+        f"Клиент: {cb.from_user.full_name} ({tag})\n\n{summary}"
+    )
     try:
-        await bot.send_message(
-            OWNER_ID,
-            f"{emoji} НОВАЯ ЗАЯВКА #{order_id} — {prefix}\n"
-            f"{datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
-            f"Клиент: {cb.from_user.full_name} ({tag})\n\n{summary}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=sell_buttons)
-        )
-        # Пересылаем фото владельцу
-        photos = data.get("sell_photos", [])
-        if photos:
+        await bot.send_message(OWNER_ID, text, reply_markup=kb)
+    except Exception as e:
+        logging.error(f"Trade sell notify error (order #{order_id}): {e}")
+        try:
+            await bot.send_message(OWNER_ID, text)
+        except Exception as e2:
+            logging.error(f"Trade sell notify fallback error: {e2}")
+    # Пересылаем фото владельцу
+    photos = data.get("sell_photos", [])
+    if photos:
+        try:
             await bot.send_message(OWNER_ID, f"📸 Фото техники по заявке #{order_id} ({len(photos)} шт.):")
             for file_id in photos:
                 await bot.send_photo(OWNER_ID, file_id)
-    except Exception as e:
-        logging.error(f"Trade sell notify error (order #{order_id}): {e}")
+        except Exception as e:
+            logging.error(f"Trade sell photos error: {e}")
     msg = (
         f"Заявка #{order_id} принята!\n\n"
         + ("Рассмотрим срочный выкуп и свяжемся в течение 15 минут.\n\n" if urgent
@@ -1827,7 +1975,7 @@ async def reminder_task():
 
 async def weekly_report_task():
     while True:
-        now        = datetime.now()
+        now        = now_msk()
         # Следующий понедельник 9:00 — используем timedelta, без replace(day=...) чтобы не падать при смене месяца
         days_ahead = (7 - now.weekday()) % 7 or 7
         next_monday = (now + timedelta(days=days_ahead)).replace(
@@ -1842,12 +1990,54 @@ async def weekly_report_task():
         except Exception as e:
             logging.error(f"Weekly report error: {e}")
 
+async def daily_report_task():
+    """Ежедневный отчёт в 20:00 МСК + бэкап БД."""
+    while True:
+        now  = now_msk()
+        # Следующие 20:00 МСК
+        target = now.replace(hour=20, minute=0, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+        await asyncio.sleep((target - now).total_seconds())
+        try:
+            # Статистика за день
+            today = now_msk().strftime("%d.%m.%Y")
+            with db_connect() as con:
+                new_orders  = con.execute("SELECT COUNT(*) FROM orders WHERE created_at LIKE ?", (f"{today}%",)).fetchone()[0]
+                new_users   = con.execute("SELECT COUNT(*) FROM users WHERE first_seen LIKE ?", (f"{today}%",)).fetchone()[0]
+                pending_cnt = con.execute("SELECT COUNT(*) FROM orders WHERE status='принята'").fetchone()[0]
+                done_cnt    = con.execute("SELECT COUNT(*) FROM orders WHERE status='выполнено' AND updated_at LIKE ?", (f"{today}%",)).fetchone()[0]
+            report = (
+                f"📊 Итог дня — {today}\n\n"
+                f"Новых заявок:      {new_orders}\n"
+                f"Выполнено:         {done_cnt}\n"
+                f"Ждут ответа:       {pending_cnt}\n"
+                f"Новых клиентов:    {new_users}"
+            )
+            await bot.send_message(OWNER_ID, report)
+        except Exception as e:
+            logging.error(f"Daily report error: {e}")
+        try:
+            # Бэкап БД — отправляем файл владельцу
+            from aiogram.types import FSInputFile
+            import os
+            if os.path.exists(DB_FILE):
+                backup_name = f"vtehnike_backup_{now_msk().strftime('%Y%m%d')}.db"
+                doc = FSInputFile(DB_FILE, filename=backup_name)
+                await bot.send_document(
+                    OWNER_ID, doc,
+                    caption=f"💾 Резервная копия БД — {now_msk().strftime('%d.%m.%Y')}"
+                )
+        except Exception as e:
+            logging.error(f"DB backup error: {e}")
+
 # ─── ЗАПУСК ───────────────────────────────────────────────────────────────────
 async def main():
     db_init()
-    print("VTehnike 24 Bot v16.0 запущен!")
+    print("VTehnike 24 Bot v17.0 запущен!")
     asyncio.create_task(reminder_task())
     asyncio.create_task(weekly_report_task())
+    asyncio.create_task(daily_report_task())
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
