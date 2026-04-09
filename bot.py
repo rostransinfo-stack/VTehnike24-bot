@@ -33,7 +33,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import CommandStart, Command
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────────────────────
-BOT_TOKEN = "151969834:AAHLEnwxwfpaaERnJaOYiiA6ctXJoxvR4C8"
+BOT_TOKEN = "7151969834:AAHLEnwxwfpaaERnJaOYiiA6ctXJoxvR4C8"
 OWNER_ID   = 125380747
 DB_FILE    = "/data/vtehnike.db"
 PHONE      = "+7 (992) 350-80-08"
