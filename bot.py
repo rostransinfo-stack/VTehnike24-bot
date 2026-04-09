@@ -34,7 +34,7 @@ from aiogram.filters import CommandStart, Command
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────────────────────
 BOT_TOKEN = "7151969834:AAHLEnwxwfpaaERnJaOYiiA6ctXJoxvR4C8"
-OWNER_ID   = 123456789
+OWNER_ID   = 125380747
 DB_FILE    = "/data/vtehnike.db"
 PHONE      = "+7 (992) 350-80-08"
 # ──────────────────────────────────────────────────────────────────────────────
@@ -667,7 +667,7 @@ async def notify_owner(section: str, summary: str, user, order_id: int, data: di
     label  = labels.get(section, section.upper())
     tag    = f"@{user.username}" if user.username else f"ID: {user.id}"
     phone  = (data or {}).get("phone", "")
-    phone_clean = phone.replace(" ", "").replace("-", "") if phone else ""
+    phone_clean = phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "") if phone else ""
     buttons = [
         [InlineKeyboardButton(text="▶️ В работу",         callback_data=f"ss_{order_id}_{user.id}_inwork")],
         [InlineKeyboardButton(text="✅ Выполнено",         callback_data=f"ss_{order_id}_{user.id}_done")],
@@ -675,7 +675,7 @@ async def notify_owner(section: str, summary: str, user, order_id: int, data: di
         [InlineKeyboardButton(text="❌ Отменить",          callback_data=f"ss_{order_id}_{user.id}_cancel")],
     ]
     if phone_clean:
-        buttons.insert(2, [InlineKeyboardButton(text="📞 Позвонить клиенту", url=f"tel:{phone_clean}")])
+        buttons.insert(0, [InlineKeyboardButton(text="📞 Позвонить клиенту", url=f"tel:{phone_clean}")])
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     await bot.send_message(
         OWNER_ID,
@@ -724,7 +724,10 @@ async def handle_confirm(cb: CallbackQuery, state: FSMContext, section: str, sum
     summary  = summary_fn(data)
     await state.clear()  # сразу очищаем — защита от двойного нажатия
     order_id = db_add_order(cb.from_user.id, section, data.get("order_type", section), summary)
-    await notify_owner(section, summary, cb.from_user, order_id, data)
+    try:
+        await notify_owner(section, summary, cb.from_user, order_id, data)
+    except Exception as e:
+        logging.error(f"notify_owner error (order #{order_id}): {e}")
     await cb.message.answer(
         f"Заявка #{order_id} принята!\n\n"
         f"Свяжемся в течение 15 минут.\n\n"
@@ -1088,17 +1091,19 @@ async def _handle_callback(message: Message, phone: str, state: FSMContext):
     db_track_user(user)
     await state.clear()
     tag = f"@{user.username}" if user.username else f"ID: {user.id}"
-    phone_clean = phone.replace(" ", "").replace("-", "")
+    phone_clean = phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    cb_buttons = [
+        [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_0_{user.id}")],
+    ]
+    if phone_clean:
+        cb_buttons.insert(0, [InlineKeyboardButton(text="📞 Позвонить клиенту", url=f"tel:{phone_clean}")])
     await bot.send_message(
         OWNER_ID,
         f"📞 ПЕРЕЗВОНИТЬ!\n\n"
         f"Клиент: {user.full_name} ({tag})\n"
         f"Телефон: {phone}\n"
         f"{datetime.now().strftime('%d.%m.%Y %H:%M')}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📞 Позвонить клиенту",  url=f"tel:{phone_clean}")],
-            [InlineKeyboardButton(text="💬 Написать клиенту",   callback_data=f"msg_0_{user.id}")],
-        ])
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=cb_buttons)
     )
     await message.answer("Перезвоним в течение 15 минут!", reply_markup=ReplyKeyboardRemove())
     await message.answer("Главное меню:", reply_markup=kb_main())
@@ -1552,17 +1557,23 @@ async def trade_buy_finish(cb: CallbackQuery, state: FSMContext):
     )
     order_id = db_add_order(cb.from_user.id, "trade", "buy", summary)
     tag = f"@{cb.from_user.username}" if cb.from_user.username else f"ID: {cb.from_user.id}"
-    phone_clean = data.get('phone', '').replace(' ', '').replace('-', '')
-    await bot.send_message(
-        OWNER_ID,
-        f"🟢 НОВАЯ ЗАЯВКА #{order_id} — ПОКУПКА ТЕХНИКИ\n"
-        f"{datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
-        f"Клиент: {cb.from_user.full_name} ({tag})\n\n{summary}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_{order_id}_{cb.from_user.id}")],
-            [InlineKeyboardButton(text="📞 Позвонить клиенту", url=f"tel:{phone_clean}")],
-        ])
-    )
+    phone_clean = data.get('phone', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+    trade_buttons = [
+        [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_{order_id}_{cb.from_user.id}")],
+        [InlineKeyboardButton(text="▶️ В работу", callback_data=f"ss_{order_id}_{cb.from_user.id}_inwork")],
+    ]
+    if phone_clean:
+        trade_buttons.insert(0, [InlineKeyboardButton(text="📞 Позвонить клиенту", url=f"tel:{phone_clean}")])
+    try:
+        await bot.send_message(
+            OWNER_ID,
+            f"🟢 НОВАЯ ЗАЯВКА #{order_id} — ПОКУПКА ТЕХНИКИ\n"
+            f"{datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+            f"Клиент: {cb.from_user.full_name} ({tag})\n\n{summary}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=trade_buttons)
+        )
+    except Exception as e:
+        logging.error(f"Trade buy notify error (order #{order_id}): {e}")
     await cb.message.answer(
         f"Заявка #{order_id} принята!\n\n"
         "Подберём варианты и свяжемся в течение 15 минут.\n\n"
@@ -1707,24 +1718,29 @@ async def trade_sell_finish(cb: CallbackQuery, state: FSMContext):
     order_id = db_add_order(cb.from_user.id, "trade", "urgent" if urgent else "sell", summary)
     tag = f"@{cb.from_user.username}" if cb.from_user.username else f"ID: {cb.from_user.id}"
     emoji = "⚡" if urgent else "🔴"
-    phone_clean = data.get('phone', '').replace(' ', '').replace('-', '')
-    await bot.send_message(
-        OWNER_ID,
-        f"{emoji} НОВАЯ ЗАЯВКА #{order_id} — {prefix}\n"
-        f"{datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
-        f"Клиент: {cb.from_user.full_name} ({tag})\n\n{summary}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_{order_id}_{cb.from_user.id}")],
-            [InlineKeyboardButton(text="📞 Позвонить клиенту", url=f"tel:{phone_clean}")],
-            [InlineKeyboardButton(text="▶️ В работу", callback_data=f"ss_{order_id}_{cb.from_user.id}_inwork")],
-        ])
-    )
-    # Пересылаем фото владельцу
-    photos = data.get("sell_photos", [])
-    if photos:
-        await bot.send_message(OWNER_ID, f"📸 Фото техники по заявке #{order_id} ({len(photos)} шт.):")
-        for file_id in photos:
-            await bot.send_photo(OWNER_ID, file_id)
+    phone_clean = data.get('phone', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+    sell_buttons = [
+        [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_{order_id}_{cb.from_user.id}")],
+        [InlineKeyboardButton(text="▶️ В работу", callback_data=f"ss_{order_id}_{cb.from_user.id}_inwork")],
+    ]
+    if phone_clean:
+        sell_buttons.insert(0, [InlineKeyboardButton(text="📞 Позвонить клиенту", url=f"tel:{phone_clean}")])
+    try:
+        await bot.send_message(
+            OWNER_ID,
+            f"{emoji} НОВАЯ ЗАЯВКА #{order_id} — {prefix}\n"
+            f"{datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+            f"Клиент: {cb.from_user.full_name} ({tag})\n\n{summary}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=sell_buttons)
+        )
+        # Пересылаем фото владельцу
+        photos = data.get("sell_photos", [])
+        if photos:
+            await bot.send_message(OWNER_ID, f"📸 Фото техники по заявке #{order_id} ({len(photos)} шт.):")
+            for file_id in photos:
+                await bot.send_photo(OWNER_ID, file_id)
+    except Exception as e:
+        logging.error(f"Trade sell notify error (order #{order_id}): {e}")
     msg = (
         f"Заявка #{order_id} принята!\n\n"
         + ("Рассмотрим срочный выкуп и свяжемся в течение 15 минут.\n\n" if urgent
