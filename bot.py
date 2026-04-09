@@ -1,9 +1,13 @@
 """
-VTehnike 24 — Telegram Bot v12.0
+VTehnike 24 — Telegram Bot v14.0
 Три направления:
   🚜 Аренда техники
   🏗️ Демонтаж, земляные работы и благоустройство
   🔧 VTehnike 24 Service — сервис и ремонт
+Изменения v14:
+  - Исправлена отправка заявок из раздела Покупка/Продажа
+  - Комиссия 1% за подбор техники (покупка)
+  - Запрос фото при срочном выкупе, пересылка фото владельцу
 """
 
 import asyncio
@@ -397,6 +401,7 @@ class Trade(StatesGroup):
     sell_tech         = State()
     sell_condition    = State()
     sell_price        = State()
+    sell_photo        = State()   # фото техники (обязательно для срочного выкупа)
     sell_phone        = State()
     sell_confirm      = State()
 
@@ -1361,6 +1366,8 @@ async def trade_buy_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Trade.entering_tech)
     await cb.message.answer(
         "🟢 Покупка техники\n\n"
+        "Подберём технику под ваш запрос и бюджет.\n"
+        "Комиссия за подбор — 1% от стоимости сделки.\n\n"
         "Укажите какая техника нужна:\n"
         "Например: Экскаватор Komatsu PC200, экскаватор-погрузчик JCB 3CX"
     )
@@ -1416,6 +1423,7 @@ async def _trade_buy_show_confirm(message: Message, state: FSMContext):
         f"Бюджет:   {data.get('budget', '-')}\n"
         f"Регион:   {data.get('region', '-')}\n"
         f"Телефон:  {data.get('phone', '-')}\n\n"
+        "ℹ️ Комиссия за подбор: 1% от стоимости сделки\n\n"
         "Всё верно?"
     )
     await message.answer(text, reply_markup=kb_trade_confirm_buy())
@@ -1428,7 +1436,8 @@ async def trade_buy_finish(cb: CallbackQuery, state: FSMContext):
         f"Техника:  {data.get('tech', '-')}\n"
         f"Бюджет:   {data.get('budget', '-')}\n"
         f"Регион:   {data.get('region', '-')}\n"
-        f"Телефон:  {data.get('phone', '-')}"
+        f"Телефон:  {data.get('phone', '-')}\n\n"
+        f"Комиссия за подбор: 1% от стоимости сделки"
     )
     order_id = db_add_order(cb.from_user.id, "trade", "buy", summary)
     tag = f"@{cb.from_user.username}" if cb.from_user.username else f"ID: {cb.from_user.id}"
@@ -1445,6 +1454,7 @@ async def trade_buy_finish(cb: CallbackQuery, state: FSMContext):
     await cb.message.answer(
         f"Заявка #{order_id} принята!\n\n"
         "Подберём варианты и свяжемся в течение 15 минут.\n\n"
+        "ℹ️ Комиссия за подбор техники — 1% от стоимости сделки.\n\n"
         "Спасибо, что выбрали VTehnike 24!",
         reply_markup=kb_main()
     )
@@ -1478,6 +1488,7 @@ async def trade_sell_condition(cb: CallbackQuery, state: FSMContext):
     condition = conditions.get(cb.data, "-")
     await state.update_data(condition=condition)
     await state.set_state(Trade.sell_price)
+    await cb.answer()
     await cb.message.answer(
         f"Состояние: {condition}\n\n"
         "Укажите желаемую цену:\n"
@@ -1487,20 +1498,75 @@ async def trade_sell_condition(cb: CallbackQuery, state: FSMContext):
 @dp.message(Trade.sell_price)
 async def trade_sell_price(message: Message, state: FSMContext):
     await state.update_data(price=message.text)
+    data = await state.get_data()
+    if data.get("trade_action") == "urgent":
+        await state.set_state(Trade.sell_photo)
+        await message.answer(
+            "📸 Для срочного выкупа нам нужны фото техники.\n\n"
+            "Пришлите 1-3 фото (общий вид, кабина, ходовая).\n"
+            "Это ускорит оценку и согласование цены.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+    else:
+        await state.set_state(Trade.entering_phone)
+        await message.answer("📞 Укажите номер телефона:", reply_markup=kb_phone())
+
+@dp.message(Trade.sell_photo, F.photo)
+async def trade_sell_photo(message: Message, state: FSMContext):
+    data = await state.get_data()
+    photos = data.get("sell_photos", [])
+    photos.append(message.photo[-1].file_id)
+    await state.update_data(sell_photos=photos)
+    count = len(photos)
+    if count < 3:
+        await message.answer(
+            f"Фото {count} получено ✅\n\n"
+            "Пришлите ещё фото или нажмите «Продолжить»:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Продолжить ➡️", callback_data="trade_photo_done")]
+            ])
+        )
+    else:
+        await state.set_state(Trade.entering_phone)
+        await message.answer(
+            "Отлично, 3 фото получено! 📸\n\n📞 Укажите номер телефона:",
+            reply_markup=kb_phone()
+        )
+
+@dp.callback_query(F.data == "trade_photo_done", Trade.sell_photo)
+async def trade_photo_done(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    count = len(data.get("sell_photos", []))
+    if count == 0:
+        await cb.answer("Пожалуйста, пришлите хотя бы одно фото!", show_alert=True)
+        return
+    await cb.answer()
     await state.set_state(Trade.entering_phone)
-    await message.answer("📞 Укажите номер телефона:", reply_markup=kb_phone())
+    await cb.message.answer("📞 Укажите номер телефона:", reply_markup=kb_phone())
+
+@dp.message(Trade.sell_photo)
+async def trade_sell_photo_wrong(message: Message, state: FSMContext):
+    await message.answer(
+        "Пожалуйста, пришлите фото техники 📸\n\n"
+        "Или нажмите «Продолжить» если фото уже отправлены:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Продолжить ➡️", callback_data="trade_photo_done")]
+        ])
+    )
 
 async def _trade_sell_show_confirm(message: Message, state: FSMContext):
     data = await state.get_data()
     await state.set_state(Trade.sell_confirm)
     urgent = data.get("trade_action") == "urgent"
     prefix = "Срочный выкуп" if urgent else "Продажа техники"
+    photo_line = f"\nФото:       {data.get('photo_note', '-')}" if urgent else ""
     text = (
         f"Заявка — {prefix}:\n\n"
         f"Техника:    {data.get('tech', '-')}\n"
         f"Состояние:  {data.get('condition', '-')}\n"
         f"Цена:       {data.get('price', '-')}\n"
-        f"Телефон:    {data.get('phone', '-')}\n\n"
+        f"Телефон:    {data.get('phone', '-')}"
+        f"{photo_line}\n\n"
         "Всё верно?"
     )
     await message.answer(text, reply_markup=kb_trade_confirm_sell())
@@ -1529,6 +1595,12 @@ async def trade_sell_finish(cb: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_{order_id}_{cb.from_user.id}")]
         ])
     )
+    # Пересылаем фото владельцу (для срочного выкупа)
+    photos = data.get("sell_photos", [])
+    if photos:
+        await bot.send_message(OWNER_ID, f"📸 Фото техники по заявке #{order_id} ({len(photos)} шт.):")
+        for file_id in photos:
+            await bot.send_photo(OWNER_ID, file_id)
     await state.clear()
     msg = (
         f"Заявка #{order_id} принята!\n\n"
@@ -1550,6 +1622,7 @@ async def trade_urgent_start(cb: CallbackQuery, state: FSMContext):
         "Что продаёте? Укажите тип и марку:\n"
         "Например: Экскаватор Hitachi ZX200 2018 года"
     )
+    await cb.answer()
 
 # ─── FALLBACK ─────────────────────────────────────────────────────────────────
 @dp.message()
@@ -1597,7 +1670,7 @@ async def weekly_report_task():
 # ─── ЗАПУСК ───────────────────────────────────────────────────────────────────
 async def main():
     db_init()
-    print("VTehnike 24 Bot v13.0 запущен!")
+    print("VTehnike 24 Bot v14.0 запущен!")
     asyncio.create_task(reminder_task())
     asyncio.create_task(weekly_report_task())
     await dp.start_polling(bot, skip_updates=True)
