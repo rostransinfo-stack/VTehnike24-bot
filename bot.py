@@ -23,7 +23,7 @@ from aiogram.filters import CommandStart, Command
 
 # ─── НАСТРОЙКИ ────────────────────────────────────────────────────────────────
 BOT_TOKEN = "7151969834:AAHLEnwxwfpaaERnJaOYiiA6ctXJoxvR4C8"
-OWNER_ID   = 125380747
+OWNER_ID   = 123456789
 DB_FILE    = "/data/vtehnike.db"
 PHONE      = "+7 (992) 350-80-08"
 # ──────────────────────────────────────────────────────────────────────────────
@@ -384,6 +384,22 @@ class Service(StatesGroup):
     entering_comment  = State()
     confirm           = State()
 
+
+class Trade(StatesGroup):
+    choosing_action   = State()
+    # Покупка
+    entering_tech     = State()
+    entering_budget   = State()
+    entering_region   = State()
+    entering_phone    = State()
+    confirm           = State()
+    # Продажа
+    sell_tech         = State()
+    sell_condition    = State()
+    sell_price        = State()
+    sell_phone        = State()
+    sell_confirm      = State()
+
 class OwnerReply(StatesGroup):
     waiting_message = State()
 
@@ -396,6 +412,7 @@ def kb_main():
         [InlineKeyboardButton(text="🚜 Аренда техники",                   callback_data="start_rental")],
         [InlineKeyboardButton(text="🏗 Демонтаж, земляные работы, благ.", callback_data="start_works")],
         [InlineKeyboardButton(text="🔧 VTehnike 24 Service",              callback_data="start_service")],
+        [InlineKeyboardButton(text="💰 Купить / Продать технику",         callback_data="start_trade")],
         [InlineKeyboardButton(text="📋 Мои заявки",                       callback_data="my_orders")],
         [InlineKeyboardButton(text="📞 Перезвоните мне",                  callback_data="callback_request")],
         [InlineKeyboardButton(text="☎️ Позвонить нам",                    callback_data="call_us")],
@@ -730,7 +747,7 @@ async def my_orders(cb: CallbackQuery):
         )
         return
     emoji_map = {"принята": "🆕", "в работе": "🔧", "выполнено": "✅", "отменена": "❌"}
-    section_map = {"rental": "Аренда", "works": "Работы", "service": "Сервис", "callback": "Звонок"}
+    section_map = {"rental": "Аренда", "works": "Работы", "service": "Сервис", "trade": "Купля-продажа", "callback": "Звонок"}
     text = "Ваши заявки:\n\n"
     for row in rows:
         order_id, section, order_type, status, created_at = row
@@ -1078,7 +1095,7 @@ async def cmd_orders(message: Message):
     if not rows:
         await message.answer("Нет активных заявок.")
         return
-    section_map = {"rental": "АРЕНДА", "works": "РАБОТЫ", "service": "СЕРВИС"}
+    section_map = {"rental": "АРЕНДА", "works": "РАБОТЫ", "service": "СЕРВИС", "trade": "КУПЛЯ-ПРОДАЖА"}
     emoji_map   = {"принята": "🆕", "в работе": "🔧"}
     for row in rows:
         order_id, user_id, section, order_type, status, created_at, name, username = row
@@ -1295,6 +1312,245 @@ async def handle_photo(message: Message):
         await bot.send_message(OWNER_ID, f"Фото от {message.from_user.full_name} (без заявки)")
         await message.answer("Фото получено! Свяжемся в течение 15 минут.", reply_markup=kb_back_main())
 
+
+# ─── ПОКУПКА И ПРОДАЖА ТЕХНИКИ ────────────────────────────────────────────────
+def kb_trade_menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🟢 Купить технику",          callback_data="trade_buy")],
+        [InlineKeyboardButton(text="🔴 Продать технику",         callback_data="trade_sell")],
+        [InlineKeyboardButton(text="⚡ Срочно продать — выкуп", callback_data="trade_urgent")],
+        [InlineKeyboardButton(text="⬅️ Главное меню",            callback_data="back_main")],
+    ])
+
+def kb_trade_condition():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Отличное (как новая)",    callback_data="cond_excellent")],
+        [InlineKeyboardButton(text="Хорошее (рабочая)",       callback_data="cond_good")],
+        [InlineKeyboardButton(text="Удовлетворительное",      callback_data="cond_fair")],
+        [InlineKeyboardButton(text="Требует ремонта",         callback_data="cond_repair")],
+    ])
+
+def kb_trade_confirm_buy():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Отправить заявку", callback_data="trade_cfyes_buy")],
+        [InlineKeyboardButton(text="✏️ Изменить",         callback_data="start_trade")],
+    ])
+
+def kb_trade_confirm_sell():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Отправить заявку", callback_data="trade_cfyes_sell")],
+        [InlineKeyboardButton(text="✏️ Изменить",         callback_data="start_trade")],
+    ])
+
+@dp.callback_query(F.data == "start_trade")
+async def start_trade(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await cb.message.answer(
+        "💰 Покупка и продажа спецтехники\n\n"
+        "Помогаем купить технику по рыночной цене "
+        "и быстро продать с минимальными усилиями.\n\n"
+        "Выберите действие:",
+        reply_markup=kb_trade_menu()
+    )
+
+# ─── ПОКУПКА ──────────────────────────────────────────────────────────────────
+@dp.callback_query(F.data == "trade_buy")
+async def trade_buy_start(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await state.update_data(trade_action="buy")
+    await state.set_state(Trade.entering_tech)
+    await cb.message.answer(
+        "🟢 Покупка техники\n\n"
+        "Укажите какая техника нужна:\n"
+        "Например: Экскаватор Komatsu PC200, экскаватор-погрузчик JCB 3CX"
+    )
+
+@dp.message(Trade.entering_tech)
+async def trade_buy_tech(message: Message, state: FSMContext):
+    await state.update_data(tech=message.text)
+    await state.set_state(Trade.entering_budget)
+    await message.answer(
+        "💰 Укажите бюджет:\n"
+        "Например: до 3 000 000 руб., 1,5–2 млн руб."
+    )
+
+@dp.message(Trade.entering_budget)
+async def trade_buy_budget(message: Message, state: FSMContext):
+    await state.update_data(budget=message.text)
+    await state.set_state(Trade.entering_region)
+    await message.answer(
+        "📍 Укажите регион или город:\n"
+        "Например: Московская область, Подольск"
+    )
+
+@dp.message(Trade.entering_region)
+async def trade_buy_region(message: Message, state: FSMContext):
+    await state.update_data(region=message.text)
+    await state.set_state(Trade.entering_phone)
+    await message.answer("📞 Укажите номер телефона:", reply_markup=kb_phone())
+
+@dp.message(Trade.entering_phone, F.contact)
+async def trade_phone_contact(message: Message, state: FSMContext):
+    await state.update_data(phone=message.contact.phone_number)
+    data = await state.get_data()
+    if data.get("trade_action") == "buy":
+        await _trade_buy_show_confirm(message, state)
+    else:
+        await _trade_sell_show_confirm(message, state)
+
+@dp.message(Trade.entering_phone)
+async def trade_phone_text(message: Message, state: FSMContext):
+    await state.update_data(phone=message.text)
+    data = await state.get_data()
+    if data.get("trade_action") == "buy":
+        await _trade_buy_show_confirm(message, state)
+    else:
+        await _trade_sell_show_confirm(message, state)
+
+async def _trade_buy_show_confirm(message: Message, state: FSMContext):
+    data = await state.get_data()
+    await state.set_state(Trade.confirm)
+    text = (
+        "Заявка на покупку:\n\n"
+        f"Техника:  {data.get('tech', '-')}\n"
+        f"Бюджет:   {data.get('budget', '-')}\n"
+        f"Регион:   {data.get('region', '-')}\n"
+        f"Телефон:  {data.get('phone', '-')}\n\n"
+        "Всё верно?"
+    )
+    await message.answer(text, reply_markup=kb_trade_confirm_buy())
+
+@dp.callback_query(F.data == "trade_cfyes_buy", Trade.confirm)
+async def trade_buy_finish(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    summary = (
+        f"Заявка на покупку техники:\n\n"
+        f"Техника:  {data.get('tech', '-')}\n"
+        f"Бюджет:   {data.get('budget', '-')}\n"
+        f"Регион:   {data.get('region', '-')}\n"
+        f"Телефон:  {data.get('phone', '-')}"
+    )
+    order_id = db_add_order(cb.from_user.id, "trade", "buy", summary)
+    tag = f"@{cb.from_user.username}" if cb.from_user.username else f"ID: {cb.from_user.id}"
+    await bot.send_message(
+        OWNER_ID,
+        f"НОВАЯ ЗАЯВКА #{order_id} — ПОКУПКА ТЕХНИКИ\n"
+        f"{datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+        f"Клиент: {cb.from_user.full_name} ({tag})\n\n{summary}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_{order_id}_{cb.from_user.id}")]
+        ])
+    )
+    await state.clear()
+    await cb.message.answer(
+        f"Заявка #{order_id} принята!\n\n"
+        "Подберём варианты и свяжемся в течение 15 минут.\n\n"
+        "Спасибо, что выбрали VTehnike 24!",
+        reply_markup=kb_main()
+    )
+
+# ─── ПРОДАЖА ──────────────────────────────────────────────────────────────────
+@dp.callback_query(F.data == "trade_sell")
+async def trade_sell_start(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await state.update_data(trade_action="sell")
+    await state.set_state(Trade.sell_tech)
+    await cb.message.answer(
+        "🔴 Продажа техники\n\n"
+        "Что продаёте? Укажите тип и марку:\n"
+        "Например: Экскаватор Komatsu PC200 2015 года"
+    )
+
+@dp.message(Trade.sell_tech)
+async def trade_sell_tech(message: Message, state: FSMContext):
+    await state.update_data(tech=message.text)
+    await state.set_state(Trade.sell_condition)
+    await message.answer("Выберите состояние техники:", reply_markup=kb_trade_condition())
+
+@dp.callback_query(F.data.startswith("cond_"), Trade.sell_condition)
+async def trade_sell_condition(cb: CallbackQuery, state: FSMContext):
+    conditions = {
+        "cond_excellent": "Отличное (как новая)",
+        "cond_good":      "Хорошее (рабочая)",
+        "cond_fair":      "Удовлетворительное",
+        "cond_repair":    "Требует ремонта",
+    }
+    condition = conditions.get(cb.data, "-")
+    await state.update_data(condition=condition)
+    await state.set_state(Trade.sell_price)
+    await cb.message.answer(
+        f"Состояние: {condition}\n\n"
+        "Укажите желаемую цену:\n"
+        "Например: 2 500 000 руб. или торг"
+    )
+
+@dp.message(Trade.sell_price)
+async def trade_sell_price(message: Message, state: FSMContext):
+    await state.update_data(price=message.text)
+    await state.set_state(Trade.entering_phone)
+    await message.answer("📞 Укажите номер телефона:", reply_markup=kb_phone())
+
+async def _trade_sell_show_confirm(message: Message, state: FSMContext):
+    data = await state.get_data()
+    await state.set_state(Trade.sell_confirm)
+    urgent = data.get("trade_action") == "urgent"
+    prefix = "Срочный выкуп" if urgent else "Продажа техники"
+    text = (
+        f"Заявка — {prefix}:\n\n"
+        f"Техника:    {data.get('tech', '-')}\n"
+        f"Состояние:  {data.get('condition', '-')}\n"
+        f"Цена:       {data.get('price', '-')}\n"
+        f"Телефон:    {data.get('phone', '-')}\n\n"
+        "Всё верно?"
+    )
+    await message.answer(text, reply_markup=kb_trade_confirm_sell())
+
+@dp.callback_query(F.data == "trade_cfyes_sell", Trade.sell_confirm)
+async def trade_sell_finish(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    urgent = data.get("trade_action") == "urgent"
+    prefix = "СРОЧНЫЙ ВЫКУП" if urgent else "ПРОДАЖА ТЕХНИКИ"
+    summary = (
+        f"Заявка — {prefix}:\n\n"
+        f"Техника:    {data.get('tech', '-')}\n"
+        f"Состояние:  {data.get('condition', '-')}\n"
+        f"Цена:       {data.get('price', '-')}\n"
+        f"Телефон:    {data.get('phone', '-')}"
+    )
+    order_id = db_add_order(cb.from_user.id, "trade", "urgent" if urgent else "sell", summary)
+    tag = f"@{cb.from_user.username}" if cb.from_user.username else f"ID: {cb.from_user.id}"
+    emoji = "⚡" if urgent else "🔴"
+    await bot.send_message(
+        OWNER_ID,
+        f"{emoji} НОВАЯ ЗАЯВКА #{order_id} — {prefix}\n"
+        f"{datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+        f"Клиент: {cb.from_user.full_name} ({tag})\n\n{summary}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Написать клиенту", callback_data=f"msg_{order_id}_{cb.from_user.id}")]
+        ])
+    )
+    await state.clear()
+    msg = (
+        f"Заявка #{order_id} принята!\n\n"
+        + ("Рассмотрим срочный выкуп и свяжемся в течение 15 минут.\n\n" if urgent
+           else "Свяжемся в течение 15 минут для уточнения деталей.\n\n")
+        + "Спасибо, что выбрали VTehnike 24!"
+    )
+    await cb.message.answer(msg, reply_markup=kb_main())
+
+# ─── СРОЧНЫЙ ВЫКУП ────────────────────────────────────────────────────────────
+@dp.callback_query(F.data == "trade_urgent")
+async def trade_urgent_start(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await state.update_data(trade_action="urgent")
+    await state.set_state(Trade.sell_tech)
+    await cb.message.answer(
+        "⚡ Срочный выкуп техники\n\n"
+        "Выкупаем быстро — деньги в день осмотра.\n\n"
+        "Что продаёте? Укажите тип и марку:\n"
+        "Например: Экскаватор Hitachi ZX200 2018 года"
+    )
+
 # ─── FALLBACK ─────────────────────────────────────────────────────────────────
 @dp.message()
 async def fallback(message: Message, state: FSMContext):
@@ -1309,7 +1565,7 @@ async def reminder_task():
         try:
             pending = db_get_pending_orders(minutes=120)
             for order in pending:
-                section_map = {"rental": "АРЕНДА", "works": "РАБОТЫ", "service": "СЕРВИС"}
+                section_map = {"rental": "АРЕНДА", "works": "РАБОТЫ", "service": "СЕРВИС", "trade": "КУПЛЯ-ПРОДАЖА"}
                 label = section_map.get(order["section"], order["section"].upper())
                 await bot.send_message(
                     OWNER_ID,
@@ -1341,7 +1597,7 @@ async def weekly_report_task():
 # ─── ЗАПУСК ───────────────────────────────────────────────────────────────────
 async def main():
     db_init()
-    print("VTehnike 24 Bot v12.0 запущен!")
+    print("VTehnike 24 Bot v13.0 запущен!")
     asyncio.create_task(reminder_task())
     asyncio.create_task(weekly_report_task())
     await dp.start_polling(bot, skip_updates=True)
