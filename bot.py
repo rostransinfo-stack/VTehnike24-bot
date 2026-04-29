@@ -1,10 +1,23 @@
 """
-VTehnike 24 — Telegram Bot v17.0
-Три направления:
+VTehnike 24 — Telegram Bot v18.0
+Четыре направления:
   🚜 Аренда техники
   🏗️ Демонтаж, земляные работы и благоустройство
   🔧 VTehnike 24 Service — сервис и ремонт
-Изменения v15:
+  💰 Купить / Продать технику (Trade)
+
+Изменения v18 (апрель 2026):
+  - Конфигурация через .env (BOT_TOKEN, OWNER_ID и т.д. — больше нет в коде)
+  - SQLite в WAL-режиме (защита от race conditions при росте нагрузки)
+  - Прайс актуализирован под рынок МО апрель 2026
+  - В главное меню добавлены кнопки «Сайт» и «Отзывы (Я.Бизнес)»
+  - В уведомление владельцу добавлен источник трафика (UTM из /start ref_xxx)
+  - В финальном сообщении после заявки — корректное ожидание времени ответа
+    (рабочие часы → 15 минут, нерабочие → утром первым делом)
+  - Формула «средний рейтинг» в /stats работает на пустых отзывах без падения
+  - Защита от частых заявок (анти-спам — 1 заявка в минуту от user_id)
+
+Изменения v17 (зафиксировано до v18):
   - Исправлен спам напоминаний (колонка reminded_at)
   - Исправлено падение weekly_report при смене месяца
   - Статистика включает купля-продажу (trade)
@@ -19,7 +32,9 @@ VTehnike 24 — Telegram Bot v17.0
 
 import asyncio
 import logging
+import os
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
@@ -32,16 +47,41 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import CommandStart, Command
 
-# ─── НАСТРОЙКИ ────────────────────────────────────────────────────────────────
-BOT_TOKEN = "7151969834:AAHLEnwxwfpaaERnJaOYiiA6ctXJoxvR4C8"
-OWNER_ID   = 125380747
-DB_FILE    = "/data/vtehnike.db"
-PHONE      = "+7 (992) 350-80-08"
+# Опционально подгружаем .env (если установлен python-dotenv)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # без dotenv тоже работает — переменные читаются из окружения
+
+# ─── НАСТРОЙКИ (из .env / переменных окружения) ─────────────────────────────
+BOT_TOKEN    = os.getenv("BOT_TOKEN", "")
+OWNER_ID     = int(os.getenv("OWNER_ID", "0"))
+DB_FILE      = os.getenv("DB_FILE", "/data/vtehnike.db")
+PHONE        = os.getenv("PHONE", "+7 (992) 350-80-08")
+SITE_URL     = os.getenv("SITE_URL", "https://vtehnike24.ru")
+YANDEX_URL   = os.getenv("YANDEX_URL", "https://yandex.ru/maps/org/153993019178")
+
+# Страховка — не запускаемся без токена и владельца
+if not BOT_TOKEN or BOT_TOKEN == "ВАШ_ТОКЕН":
+    raise RuntimeError(
+        "BOT_TOKEN не задан. Создайте файл .env рядом с bot.py со строкой:\n"
+        "BOT_TOKEN=ваш_реальный_токен_от_BotFather"
+    )
+if OWNER_ID == 0:
+    raise RuntimeError(
+        "OWNER_ID не задан. В .env добавьте:\n"
+        "OWNER_ID=ваш_telegram_id_числом (узнать через @userinfobot)"
+    )
 # ──────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp  = Dispatcher(storage=MemoryStorage())
+
+# Анти-спам: запоминаем время последней заявки от каждого user_id
+_last_order_time: dict[int, float] = {}
+ANTI_SPAM_SECONDS = 60  # 1 заявка в минуту от одного user_id
 
 # ─── БАЗА ДАННЫХ ──────────────────────────────────────────────────────────────
 def db_connect():
@@ -49,6 +89,11 @@ def db_connect():
 
 def db_init():
     with db_connect() as con:
+        # WAL-режим — защита от race conditions при росте нагрузки.
+        # busy_timeout — ждать 5 секунд если БД заблокирована другим запросом.
+        con.execute("PRAGMA journal_mode=WAL;")
+        con.execute("PRAGMA busy_timeout=5000;")
+        con.execute("PRAGMA synchronous=NORMAL;")  # быстрее, безопасно при WAL
         con.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id         INTEGER PRIMARY KEY,
@@ -89,6 +134,7 @@ def db_init():
             "ALTER TABLE orders ADD COLUMN section TEXT DEFAULT 'rental'",
             "ALTER TABLE orders ADD COLUMN order_type TEXT DEFAULT 'rental'",
             "ALTER TABLE orders ADD COLUMN reminded_at TEXT",
+            "ALTER TABLE users  ADD COLUMN ref TEXT",
         ]:
             try:
                 con.execute(migration)
@@ -102,21 +148,22 @@ def db_track_user(user, ref: str = "") -> bool:
         existing = con.execute("SELECT id FROM users WHERE id=?", (user.id,)).fetchone()
         if not existing:
             con.execute(
-                "INSERT INTO users (id, name, username, first_seen, last_seen, visits) VALUES (?,?,?,?,?,1)",
-                (user.id, user.full_name, user.username or "", now, now)
+                "INSERT INTO users (id, name, username, first_seen, last_seen, visits, ref) VALUES (?,?,?,?,?,1,?)",
+                (user.id, user.full_name, user.username or "", now, now, ref or "")
             )
-            if ref:
-                try:
-                    con.execute("ALTER TABLE users ADD COLUMN ref TEXT")
-                except Exception:
-                    pass
-                con.execute("UPDATE users SET ref=? WHERE id=?", (ref, user.id))
             con.commit()
             return True
         con.execute(
             "UPDATE users SET last_seen=?, visits=visits+1, name=?, username=? WHERE id=?",
             (now, user.full_name, user.username or "", user.id)
         )
+        # Если ref не был сохранён ранее (например, юзер зашёл со старой версии без ref)
+        # — обновляем при первой возможности
+        if ref:
+            try:
+                con.execute("UPDATE users SET ref=? WHERE id=? AND (ref IS NULL OR ref='')", (ref, user.id))
+            except Exception:
+                pass
         con.commit()
         return False
 
@@ -252,6 +299,36 @@ def db_get_weekly_stats() -> str:
         f"Средний отзыв:       {rating_str}"
     )
 
+def db_get_sources_stats() -> str:
+    """Распределение пользователей и заявок по источнику трафика (UTM из /start ref_xxx)."""
+    with db_connect() as con:
+        # Пользователи по источникам
+        rows = con.execute("""
+            SELECT
+                COALESCE(NULLIF(u.ref, ''), 'прямой') AS source,
+                COUNT(DISTINCT u.id) AS users,
+                COUNT(o.id) AS orders,
+                SUM(CASE WHEN o.status='выполнено' THEN 1 ELSE 0 END) AS done
+            FROM users u
+            LEFT JOIN orders o ON u.id = o.user_id
+            GROUP BY source
+            ORDER BY users DESC
+        """).fetchall()
+    if not rows:
+        return "По источникам пока нет данных."
+    out = ["Источники трафика (UTM)\n"]
+    out.append(f"{'Источник':<25} {'Юзеры':>6} {'Заявки':>7} {'Сделки':>7}")
+    out.append("─" * 50)
+    for src, users, orders, done in rows:
+        src_short = (src[:23] + "..") if len(src) > 24 else src
+        out.append(f"{src_short:<25} {users:>6} {orders or 0:>7} {done or 0:>7}")
+    out.append("\n📊 Подсказка для /start ref_xxx:")
+    out.append("  • site_main / site_okomp — с сайта")
+    out.append("  • avito_demontazh / avito_kotlovan — с Авито")
+    out.append("  • whatsapp_outreach / tg_outreach — холодные касания")
+    out.append("  • yandex_business / yandex_post — с Я.Бизнеса")
+    return "\n".join(out)
+
 # ─── ДАННЫЕ ───────────────────────────────────────────────────────────────────
 MSK = timezone(timedelta(hours=3))
 
@@ -270,19 +347,20 @@ def fmt(amount: int, prefix: bool = False) -> str:
     return ("от " + s) if prefix else s
 
 # ─── АРЕНДА ТЕХНИКИ ───────────────────────────────────────────────────────────
+# Прайс — апрель 2026, рынок Москва + МО (актуализирован под текущий уровень цен)
 RENTAL_TECH = {
-    "exc_mini":     {"name": "Мини-экскаватор (до 6т)",          "price_hour": 1800, "price_day": 14400},
-    "exc_mid":      {"name": "Экскаватор средний (6-20т)",       "price_hour": 2500, "price_day": 20000},
-    "exc_heavy":    {"name": "Экскаватор тяжёлый (20т+)",        "price_hour": 3500, "price_day": 28000},
-    "exc_loader":   {"name": "Экскаватор-погрузчик (JCB, Case)", "price_hour": 2200, "price_day": 17600},
-    "loader_front": {"name": "Погрузчик фронтальный",            "price_hour": 2000, "price_day": 16000},
-    "loader_mini":  {"name": "Мини-погрузчик (Bobcat)",          "price_hour": 1800, "price_day": 14400},
-    "bulldozer":    {"name": "Бульдозер",                        "price_hour": 3000, "price_day": 24000},
-    "grader":       {"name": "Автогрейдер",                      "price_hour": 3200, "price_day": 25600},
-    "crane":        {"name": "Автокран (25-50т)",                "price_hour": 3500, "price_day": 28000},
-    "dump":         {"name": "Самосвал (10-20т)",                "price_hour": 1500, "price_day": 12000},
-    "manipulator":  {"name": "Манипулятор",                      "price_hour": 2000, "price_day": 16000},
-    "compactor":    {"name": "Каток дорожный",                   "price_hour": 2500, "price_day": 20000},
+    "exc_mini":     {"name": "Мини-экскаватор (до 6т)",          "price_hour": 2000, "price_day": 16000},
+    "exc_mid":      {"name": "Экскаватор средний (6-20т)",       "price_hour": 3000, "price_day": 24000},
+    "exc_heavy":    {"name": "Экскаватор тяжёлый (20т+)",        "price_hour": 4500, "price_day": 36000},
+    "exc_loader":   {"name": "Экскаватор-погрузчик (JCB, Case)", "price_hour": 2500, "price_day": 20000},
+    "loader_front": {"name": "Погрузчик фронтальный",            "price_hour": 2500, "price_day": 20000},
+    "loader_mini":  {"name": "Мини-погрузчик (Bobcat)",          "price_hour": 2000, "price_day": 16000},
+    "bulldozer":    {"name": "Бульдозер",                        "price_hour": 3700, "price_day": 30000},
+    "grader":       {"name": "Автогрейдер",                      "price_hour": 3700, "price_day": 30000},
+    "crane":        {"name": "Автокран (25-50т)",                "price_hour": 4500, "price_day": 36000},
+    "dump":         {"name": "Самосвал (10-20т)",                "price_hour": 2000, "price_day": 16000},
+    "manipulator":  {"name": "Манипулятор",                      "price_hour": 2500, "price_day": 20000},
+    "compactor":    {"name": "Каток дорожный",                   "price_hour": 3000, "price_day": 24000},
 }
 
 RENTAL_WORK_TYPES = {
@@ -455,6 +533,10 @@ def kb_main():
         [InlineKeyboardButton(text="📋 Мои заявки",                       callback_data="my_orders")],
         [InlineKeyboardButton(text="📞 Перезвоните мне",                  callback_data="callback_request")],
         [InlineKeyboardButton(text="☎️ Позвонить нам",                    callback_data="call_us")],
+        [
+            InlineKeyboardButton(text="🌐 Наш сайт",          url=SITE_URL),
+            InlineKeyboardButton(text="⭐ Отзывы (Я.Бизнес)", url=YANDEX_URL),
+        ],
     ])
 
 def kb_back_main():
@@ -674,9 +756,28 @@ def service_summary(data: dict) -> str:
     return "\n".join(lines)
 
 async def notify_owner(section: str, summary: str, user, order_id: int, data: dict = None):
-    labels = {"rental": "АРЕНДА", "works": "РАБОТЫ", "service": "СЕРВИС"}
+    labels = {"rental": "АРЕНДА", "works": "РАБОТЫ", "service": "СЕРВИС", "trade": "КУПЛЯ-ПРОДАЖА"}
     label  = labels.get(section, section.upper())
     tag    = f"@{user.username}" if user.username else f"ID: {user.id}"
+    # Источник трафика (UTM из /start ref_xxx) и количество визитов
+    ref_line = ""
+    visits_line = ""
+    try:
+        with db_connect() as con:
+            row = con.execute(
+                "SELECT ref, visits FROM users WHERE id=?",
+                (user.id,)
+            ).fetchone()
+            if row:
+                ref = row[0] if len(row) > 0 else None
+                visits = row[1] if len(row) > 1 else None
+                if ref:
+                    ref_line = f"📊 Источник: {ref}\n"
+                if visits and visits > 1:
+                    visits_line = f"🔁 Визит #{visits} (повторный клиент)\n"
+    except Exception:
+        # Колонка ref может ещё не существовать у самой первой заявки — не падаем
+        pass
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="▶️ В работу",         callback_data=f"ss_{order_id}_{user.id}_inwork")],
         [InlineKeyboardButton(text="✅ Выполнено",         callback_data=f"ss_{order_id}_{user.id}_done")],
@@ -686,7 +787,8 @@ async def notify_owner(section: str, summary: str, user, order_id: int, data: di
     text = (
         f"НОВАЯ ЗАЯВКА #{order_id} — {label}\n"
         f"{now_msk().strftime('%d.%m.%Y %H:%M')}\n"
-        f"Клиент: {user.full_name} ({tag})\n\n{summary}"
+        f"Клиент: {user.full_name} ({tag})\n"
+        f"{ref_line}{visits_line}\n{summary}"
     )
     try:
         await bot.send_message(OWNER_ID, text, reply_markup=kb)
@@ -735,6 +837,14 @@ async def handle_phone_input(message: Message, state: FSMContext, phone: str, se
     await message.answer("👇", reply_markup=kb_payment(sec))
 
 async def handle_confirm(cb: CallbackQuery, state: FSMContext, section: str, summary_fn):
+    # Анти-спам: не чаще 1 заявки в минуту от одного user_id
+    uid = cb.from_user.id
+    last = _last_order_time.get(uid, 0)
+    if time.time() - last < ANTI_SPAM_SECONDS:
+        await cb.answer("Подождите минуту перед следующей заявкой", show_alert=True)
+        return
+    _last_order_time[uid] = time.time()
+
     await cb.answer("Отправляем заявку...")
     data     = await state.get_data()
     summary  = summary_fn(data)
@@ -744,9 +854,19 @@ async def handle_confirm(cb: CallbackQuery, state: FSMContext, section: str, sum
         await notify_owner(section, summary, cb.from_user, order_id, data)
     except Exception as e:
         logging.error(f"notify_owner error (order #{order_id}): {e}")
+
+    # Корректное ожидание ответа в зависимости от рабочих часов
+    if is_working_hours():
+        timing = "Свяжемся в течение 15 минут."
+    else:
+        timing = (
+            "Заявка получена! Сейчас нерабочее время — ответим утром первым делом.\n"
+            f"Если срочно: {PHONE} (круглосуточно)."
+        )
+
     await cb.message.answer(
         f"Заявка #{order_id} принята!\n\n"
-        f"Свяжемся в течение 15 минут.\n\n"
+        f"{timing}\n\n"
         f"Спасибо, что выбрали VTehnike 24!",
         reply_markup=kb_main()
     )
@@ -812,18 +932,18 @@ async def show_price(cb: CallbackQuery):
     text = (
         "📄 Прайс VTehnike 24\n\n"
         "🚜 АРЕНДА ТЕХНИКИ (смена = 8 часов)\n"
-        "Мини-экскаватор (до 6т)       от 14 400 руб./смена\n"
-        "Экскаватор средний (6–20т)    от 20 000 руб./смена\n"
-        "Экскаватор тяжёлый (20т+)     от 28 000 руб./смена\n"
-        "Экскаватор-погрузчик (JCB)    от 17 600 руб./смена\n"
-        "Погрузчик фронтальный         от 16 000 руб./смена\n"
-        "Мини-погрузчик (Bobcat)       от 14 400 руб./смена\n"
-        "Бульдозер                     от 24 000 руб./смена\n"
-        "Автогрейдер                   от 25 600 руб./смена\n"
-        "Автокран (25–50т)             от 28 000 руб./смена\n"
-        "Самосвал (10–20т)             от 12 000 руб./смена\n"
-        "Манипулятор                   от 16 000 руб./смена\n"
-        "Каток дорожный                от 20 000 руб./смена\n\n"
+        "Мини-экскаватор (до 6т)       от 16 000 руб./смена\n"
+        "Экскаватор средний (6–20т)    от 24 000 руб./смена\n"
+        "Экскаватор тяжёлый (20т+)     от 36 000 руб./смена\n"
+        "Экскаватор-погрузчик (JCB)    от 20 000 руб./смена\n"
+        "Погрузчик фронтальный         от 20 000 руб./смена\n"
+        "Мини-погрузчик (Bobcat)       от 16 000 руб./смена\n"
+        "Бульдозер                     от 30 000 руб./смена\n"
+        "Автогрейдер                   от 30 000 руб./смена\n"
+        "Автокран (25–50т)             от 36 000 руб./смена\n"
+        "Самосвал (10–20т)             от 16 000 руб./смена\n"
+        "Манипулятор                   от 20 000 руб./смена\n"
+        "Каток дорожный                от 24 000 руб./смена\n\n"
         "🔧 СЕРВИС И РЕМОНТ\n"
         "Диагностика (выезд)           5 000 руб.\n"
         "Ремонт ковша (базовый)        от 15 000 руб.\n"
@@ -1231,6 +1351,13 @@ async def cmd_week(message: Message):
         return
     await message.answer(db_get_weekly_stats())
 
+@dp.message(Command("sources"))
+async def cmd_sources(message: Message):
+    """Распределение пользователей и заявок по источнику трафика (UTM)."""
+    if message.from_user.id != OWNER_ID:
+        return
+    await message.answer(db_get_sources_stats())
+
 @dp.message(Command("orders"))
 async def cmd_orders(message: Message):
     if message.from_user.id != OWNER_ID:
@@ -1348,12 +1475,18 @@ async def cmd_help(message: Message):
             "/order [№] — найти заявку по номеру\n"
             "/stats — статистика\n"
             "/week — сводка за 7 дней\n"
+            "/sources — заявки по UTM-источникам\n"
             "/status [№] [статус] — сменить статус\n"
             "/done [№] [№] ... — закрыть несколько заявок\n"
             "/broadcast [текст] — рассылка всем\n\n"
             "Статусы: принята, в работе, выполнено, отменена\n\n"
             "Ответ клиенту: поддерживает текст, фото, документы.\n\n"
-            "UTM-ссылки: t.me/БОТ?start=ref_yandex"
+            "UTM-ссылки для отслеживания каналов:\n"
+            "  t.me/БОТ?start=site_main — с главной сайта\n"
+            "  t.me/БОТ?start=site_okomp — со страницы «О компании»\n"
+            "  t.me/БОТ?start=avito_demontazh — с Авито-объявлений\n"
+            "  t.me/БОТ?start=whatsapp_outreach — из холодных касаний WA\n"
+            "  t.me/БОТ?start=yandex_business — с Я.Бизнес карточки"
         )
     else:
         await message.answer(
